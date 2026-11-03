@@ -198,8 +198,21 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
   await page.getByLabel('Predecessor for STEP-009').selectOption('STEP-007')
   await page.getByLabel('Condition for STEP-009').fill('No')
 
-  await expect(page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="bottom"]')).toBeVisible()
-  await expect(page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="right"]')).toBeVisible()
+  await expect(page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="bottom"]')).toHaveCount(1)
+  await expect(page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="right"]')).toHaveCount(1)
+  const yesEdge = page.locator('.react-flow__edge[data-id="edge-STEP-007-STEP-008"]')
+  const noEdge = page.locator('.react-flow__edge[data-id="edge-STEP-007-STEP-009"]')
+  await expect(yesEdge).toHaveClass(/decision-source-bottom/)
+  await expect(yesEdge).toContainText('Yes')
+  await expect(noEdge).toHaveClass(/decision-source-right/)
+  await expect(noEdge).toContainText('No')
+  for (const edge of [yesEdge, noEdge]) {
+    await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('fill', 'rgb(31, 41, 55)')
+    await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('font-weight', '600')
+    await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('font-size', '12px')
+    await expect(edge.locator('.react-flow__edge-textbg')).toHaveCSS('fill', 'rgb(255, 255, 255)')
+    await expect(edge.locator('.react-flow__edge-textbg')).toHaveCSS('fill-opacity', '0.95')
+  }
 
   const positions = await page.locator('.react-flow__node[data-id^="STEP-"]').evaluateAll((nodes) =>
     nodes

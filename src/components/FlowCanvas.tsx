@@ -3,13 +3,16 @@ import dagre from 'dagre'
 import { toPng } from 'html-to-image'
 import {
   Background,
+  BaseEdge,
   Controls,
   Handle,
   MarkerType,
   MiniMap,
   Position,
   ReactFlow,
+  getSmoothStepPath,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
 } from '@xyflow/react'
@@ -43,6 +46,55 @@ interface FlowCanvasProps {
   processTitle: string
 }
 
+const DecisionSmoothStepEdge = memo(function DecisionSmoothStepEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  sourceHandleId,
+  markerEnd,
+  label,
+  labelStyle,
+  labelShowBg,
+  labelBgStyle,
+  labelBgPadding,
+  labelBgBorderRadius,
+  style,
+  interactionWidth,
+}: EdgeProps) {
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    borderRadius: 12,
+    offset: 20,
+  })
+
+  return (
+    <BaseEdge
+      id={id}
+      path={path}
+      label={label}
+      labelX={labelX}
+      labelY={labelY + (sourceHandleId === 'bottom' ? 10 : -10)}
+      labelStyle={labelStyle}
+      labelShowBg={labelShowBg}
+      labelBgStyle={labelBgStyle}
+      labelBgPadding={labelBgPadding}
+      labelBgBorderRadius={labelBgBorderRadius}
+      markerEnd={markerEnd}
+      style={style}
+      interactionWidth={interactionWidth}
+    />
+  )
+})
+
 function getPngFilename(processTitle: string): string {
   const filename = processTitle
     .trim()
@@ -66,6 +118,21 @@ function getBranchConditions(condition: string): string[] {
 function getStepSequenceNumber(stepId: string): number | undefined {
   const match = /^STEP-(\d+)$/i.exec(stepId)
   return match ? Number(match[1]) : undefined
+}
+
+function getSourceHandle(source: Step, target: Step, branchLabel = ''): 'bottom' | 'right' {
+  const condition = target.condition.trim().toLowerCase()
+  if (source.stepType === 'Decision Point' && target.predecessorId === source.id) {
+    if (condition === 'yes') return 'bottom'
+    if (condition === 'no') return 'right'
+  }
+  if (
+    (source.stepType === 'Decision Point' || source.stepType === 'Exclusive Gateway') &&
+    branchLabel.trim().toLowerCase() === 'yes'
+  ) {
+    return 'bottom'
+  }
+  return 'right'
 }
 
 function layoutSteps(
@@ -95,7 +162,14 @@ function layoutSteps(
     const stepIds = new Set(departmentSteps.map((step) => step.id))
     const graph = new dagre.graphlib.Graph()
 
-    graph.setGraph({ rankdir: 'LR', nodesep: 80, ranksep: 120, marginx: 24, marginy: 20 })
+    graph.setGraph({
+      rankdir: 'LR',
+      nodesep: 80,
+      ranksep: 120,
+      edgesep: 50,
+      marginx: 24,
+      marginy: 20,
+    })
     graph.setDefaultEdgeLabel(() => ({}))
 
     departmentSteps.forEach((step) => {
@@ -104,10 +178,22 @@ function layoutSteps(
 
     departmentSteps.forEach((step) => {
       for (const flow of step.sequenceFlows ?? []) {
-        if (stepIds.has(flow.targetId)) graph.setEdge(step.id, flow.targetId)
+        const target = stepsById.get(flow.targetId)
+        if (!target || !stepIds.has(flow.targetId)) continue
+        const branchLabel = flow.label?.trim() || flow.conditionExpression?.trim() || target.condition
+        graph.setEdge(step.id, flow.targetId, {
+          sourceHandle: getSourceHandle(step, target, branchLabel),
+          targetHandle: 'left',
+        })
       }
       if (step.predecessorId && stepIds.has(step.predecessorId)) {
-        graph.setEdge(step.predecessorId, step.id)
+        const source = stepsById.get(step.predecessorId)
+        if (source) {
+          graph.setEdge(source.id, step.id, {
+            sourceHandle: getSourceHandle(source, step, step.condition),
+            targetHandle: 'left',
+          })
+        }
       }
     })
 
@@ -227,25 +313,33 @@ function layoutSteps(
     const predecessorCondition = target.condition.trim().toLowerCase()
     const isDecisionPredecessor =
       source.stepType === 'Decision Point' && target.predecessorId === source.id
-    const sourceHandle = isDecisionPredecessor && predecessorCondition === 'yes'
-      ? 'bottom'
-      : isDecisionPredecessor && predecessorCondition === 'no'
-        ? 'right'
-        : (source.stepType === 'Decision Point' || source.stepType === 'Exclusive Gateway') &&
-            label.toLowerCase() === 'yes'
-          ? 'bottom'
-          : 'right'
+    const hasExplicitDecisionCondition =
+      isDecisionPredecessor && (predecessorCondition === 'yes' || predecessorCondition === 'no')
+    if (hasExplicitDecisionCondition) {
+      label = predecessorCondition === 'yes' ? 'Yes' : 'No'
+    }
+    const isDecisionConnection =
+      source.stepType === 'Decision Point' || source.stepType === 'Exclusive Gateway'
+
+    const sourceHandle = getSourceHandle(source, target, label)
 
     edges.push({
       id: flow.id,
       source: source.id,
       target: target.id,
       sourceHandle,
-      type: 'smoothstep',
+      targetHandle: 'left',
+      className: hasExplicitDecisionCondition ? `decision-source-${sourceHandle}` : undefined,
+      type: isDecisionConnection ? 'decisionSmoothstep' : 'smoothstep',
       label,
-      labelStyle: { fill: '#475569', fontSize: 12, fontWeight: 600 },
-      labelBgStyle: { fill: '#ffffff', fillOpacity: 0.96 },
-      labelBgPadding: [6, 3],
+      labelStyle: isDecisionConnection
+        ? { fill: '#1F2937', fontWeight: 600, fontSize: 12 }
+        : { fill: '#475569', fontSize: 12, fontWeight: 600 },
+      labelShowBg: true,
+      labelBgStyle: isDecisionConnection
+        ? { fill: '#FFFFFF', fillOpacity: 0.95 }
+        : { fill: '#ffffff', fillOpacity: 0.96 },
+      labelBgPadding: isDecisionConnection ? [6, 4] : [6, 3],
       labelBgBorderRadius: 4,
       markerEnd: { type: MarkerType.ArrowClosed, color: '#64748b' },
       style: { stroke: '#64748b', strokeWidth: 1.8 },
@@ -307,7 +401,7 @@ function ProcessStepNode({ data }: NodeProps<ProcessStepFlowNode>) {
 
   return (
     <>
-      <Handle type="target" position={Position.Left} className="!size-2 !border-2 !border-white !bg-slate-500" />
+      <Handle id="left" type="target" position={Position.Left} className="!size-2 !border-2 !border-white !bg-slate-500" />
       <div className="relative flex h-full w-full items-center justify-center">
         {isGateway ? (
           <div className="flex size-[68px] rotate-45 items-center justify-center border-2 border-amber-500 bg-amber-50 shadow-sm">
@@ -369,6 +463,10 @@ function FlowCanvas({ steps, processTitle }: FlowCanvasProps) {
   const [exportMessage, setExportMessage] = useState('')
   const nodeTypes = useMemo(
     () => ({ lane: SwimlaneNode, processStep: ProcessStepNode }),
+    [],
+  )
+  const edgeTypes = useMemo(
+    () => ({ decisionSmoothstep: DecisionSmoothStepEdge }),
     [],
   )
 
@@ -453,6 +551,7 @@ function FlowCanvas({ steps, processTitle }: FlowCanvasProps) {
                 nodes={layout.nodes}
                 edges={layout.edges}
                 nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
                 fitView
                 fitViewOptions={{ padding: 0.16, minZoom: 0.35, maxZoom: 1 }}
                 nodesDraggable={false}
