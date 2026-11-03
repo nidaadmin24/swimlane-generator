@@ -95,7 +95,7 @@ function layoutSteps(
     const stepIds = new Set(departmentSteps.map((step) => step.id))
     const graph = new dagre.graphlib.Graph()
 
-    graph.setGraph({ rankdir: 'LR', nodesep: 36, ranksep: 64, marginx: 24, marginy: 20 })
+    graph.setGraph({ rankdir: 'LR', nodesep: 80, ranksep: 120, marginx: 24, marginy: 20 })
     graph.setDefaultEdgeLabel(() => ({}))
 
     departmentSteps.forEach((step) => {
@@ -224,10 +224,23 @@ function layoutSteps(
       branchIndexes.set(source.id, branchIndex + 1)
     }
 
+    const predecessorCondition = target.condition.trim().toLowerCase()
+    const isDecisionPredecessor =
+      source.stepType === 'Decision Point' && target.predecessorId === source.id
+    const sourceHandle = isDecisionPredecessor && predecessorCondition === 'yes'
+      ? 'bottom'
+      : isDecisionPredecessor && predecessorCondition === 'no'
+        ? 'right'
+        : (source.stepType === 'Decision Point' || source.stepType === 'Exclusive Gateway') &&
+            label.toLowerCase() === 'yes'
+          ? 'bottom'
+          : 'right'
+
     edges.push({
       id: flow.id,
       source: source.id,
       target: target.id,
+      sourceHandle,
       type: 'smoothstep',
       label,
       labelStyle: { fill: '#475569', fontSize: 12, fontWeight: 600 },
@@ -328,7 +341,20 @@ function ProcessStepNode({ data }: NodeProps<ProcessStepFlowNode>) {
           </div>
         )}
       </div>
-      <Handle type="source" position={Position.Right} className="!size-2 !border-2 !border-white !bg-slate-500" />
+      {isGateway && (
+        <Handle
+          id="bottom"
+          type="source"
+          position={Position.Bottom}
+          className="!size-2 !border-2 !border-white !bg-slate-500"
+        />
+      )}
+      <Handle
+        id="right"
+        type="source"
+        position={Position.Right}
+        className="!size-2 !border-2 !border-white !bg-slate-500"
+      />
     </>
   )
 }

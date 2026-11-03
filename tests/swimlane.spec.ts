@@ -194,7 +194,12 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
   await page.getByLabel('Step type for STEP-007').selectOption('Decision Point')
   await page.getByLabel('Condition for STEP-007').fill('Yes / No')
   await page.getByLabel('Predecessor for STEP-008').selectOption('STEP-007')
+  await page.getByLabel('Condition for STEP-008').fill('Yes')
   await page.getByLabel('Predecessor for STEP-009').selectOption('STEP-007')
+  await page.getByLabel('Condition for STEP-009').fill('No')
+
+  await expect(page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="bottom"]')).toBeVisible()
+  await expect(page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="right"]')).toBeVisible()
 
   const positions = await page.locator('.react-flow__node[data-id^="STEP-"]').evaluateAll((nodes) =>
     nodes
