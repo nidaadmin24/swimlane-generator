@@ -46,7 +46,7 @@ interface FlowCanvasProps {
   processTitle: string
 }
 
-const DecisionSmoothStepEdge = memo(function DecisionSmoothStepEdge({
+const SmoothStepEdgeWithBranchLabels = memo(function SmoothStepEdgeWithBranchLabels({
   id,
   sourceX,
   sourceY,
@@ -55,6 +55,7 @@ const DecisionSmoothStepEdge = memo(function DecisionSmoothStepEdge({
   sourcePosition,
   targetPosition,
   sourceHandleId,
+  data,
   markerEnd,
   label,
   labelStyle,
@@ -75,14 +76,20 @@ const DecisionSmoothStepEdge = memo(function DecisionSmoothStepEdge({
     borderRadius: 12,
     offset: 20,
   })
+  const isDecisionConnection = data?.isDecisionConnection === true
+  const positionedLabel = isDecisionConnection
+    ? sourceHandleId === 'bottom'
+      ? { x: sourceX + 20, y: sourceY + 26 }
+      : { x: sourceX + 36, y: sourceY - 12 }
+    : { x: labelX, y: labelY }
 
   return (
     <BaseEdge
       id={id}
       path={path}
       label={label}
-      labelX={labelX}
-      labelY={labelY + (sourceHandleId === 'bottom' ? 10 : -10)}
+      labelX={positionedLabel.x}
+      labelY={positionedLabel.y}
       labelStyle={labelStyle}
       labelShowBg={labelShowBg}
       labelBgStyle={labelBgStyle}
@@ -330,7 +337,8 @@ function layoutSteps(
       sourceHandle,
       targetHandle: 'left',
       className: hasExplicitDecisionCondition ? `decision-source-${sourceHandle}` : undefined,
-      type: isDecisionConnection ? 'decisionSmoothstep' : 'smoothstep',
+      type: 'smoothstep',
+      data: { isDecisionConnection },
       label,
       labelStyle: isDecisionConnection
         ? { fill: '#1F2937', fontWeight: 600, fontSize: 12 }
@@ -466,7 +474,7 @@ function FlowCanvas({ steps, processTitle }: FlowCanvasProps) {
     [],
   )
   const edgeTypes = useMemo(
-    () => ({ decisionSmoothstep: DecisionSmoothStepEdge }),
+    () => ({ smoothstep: SmoothStepEdgeWithBranchLabels }),
     [],
   )
 
