@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import type { User } from '@supabase/supabase-js'
 import {
   ArrowRight,
@@ -88,6 +88,7 @@ function App() {
   const [isSigningIn, setIsSigningIn] = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [steps, setSteps] = useState<Step[]>(initialSteps)
+  const skipNextAutoPreviewRef = useRef(false)
   const [previewSteps, setPreviewSteps] = useState<Step[]>(initialSteps)
   const [title, setTitle] = useState(initialTitle)
   const [previewTitle, setPreviewTitle] = useState(initialTitle)
@@ -105,6 +106,21 @@ function App() {
   const hasUnsavedChanges =
     JSON.stringify({ title, steps }) !== savedSnapshot
   const validationIssues = useMemo(() => validateBpmnProcess(steps), [steps])
+
+  const updatePreview = useCallback((generatedSteps: Step[]) => {
+    setPreviewSteps(generatedSteps)
+    setPreviewTitle(title)
+    setIsFlowchartCleared(false)
+  }, [title])
+
+  useEffect(() => {
+    if (skipNextAutoPreviewRef.current) {
+      skipNextAutoPreviewRef.current = false
+      return
+    }
+
+    updatePreview(steps.map((step) => ({ ...step })))
+  }, [steps, updatePreview])
 
   useEffect(() => {
     if (!supabase) return undefined
@@ -266,6 +282,7 @@ function App() {
   function resetWorkspace() {
     const newSteps = [createDefaultStep()]
     setTitle('')
+    skipNextAutoPreviewRef.current = true
     setSteps(newSteps)
     setPreviewSteps([])
     setPreviewTitle('')
@@ -330,12 +347,6 @@ function App() {
     } finally {
       setIsDeleting(false)
     }
-  }
-
-  function updatePreview(generatedSteps: Step[]) {
-    setPreviewSteps(generatedSteps)
-    setPreviewTitle(title)
-    setIsFlowchartCleared(false)
   }
 
   const documentStatus = hasUnsavedChanges

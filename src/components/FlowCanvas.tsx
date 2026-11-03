@@ -63,6 +63,11 @@ function getBranchConditions(condition: string): string[] {
     .filter(Boolean)
 }
 
+function getStepSequenceNumber(stepId: string): number | undefined {
+  const match = /^STEP-(\d+)$/i.exec(stepId)
+  return match ? Number(match[1]) : undefined
+}
+
 function layoutSteps(
   steps: Step[],
 ): { nodes: FlowNode[]; edges: Edge[]; width: number; height: number; laneCount: number } {
@@ -142,12 +147,15 @@ function layoutSteps(
     })
 
     const orderedSteps = lane.steps
-      .map((step, index) => ({ step, index, position: lane.graph.node(step.id) }))
-      .sort((left, right) =>
-        left.position.x - right.position.x ||
-        left.position.y - right.position.y ||
-        left.index - right.index,
-      )
+      .map((step, index) => ({ step, index, sequence: getStepSequenceNumber(step.id) }))
+      .sort((left, right) => {
+        if (left.sequence !== undefined && right.sequence !== undefined) {
+          return left.sequence - right.sequence || left.index - right.index
+        }
+        if (left.sequence !== undefined) return -1
+        if (right.sequence !== undefined) return 1
+        return left.index - right.index
+      })
 
     orderedSteps.forEach(({ step }, stepIndex) => {
       const nodePosition = {

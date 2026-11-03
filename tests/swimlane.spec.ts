@@ -162,6 +162,57 @@ test('successful sign-in opens the authenticated workspace', async ({ page }) =>
   await expect(page.getByRole('button', { name: 'Sign Out' })).toBeVisible()
 })
 
+test('updates the flowchart automatically when process steps change', async ({ page }) => {
+  await mockSupabase(page)
+  await signIn(page)
+
+  await page.getByLabel('Step name for STEP-001').fill('Revised request')
+  await expect(page.locator('.react-flow')).toContainText('Revised request')
+
+  await page.getByLabel('Step type for STEP-001').selectOption('Task')
+  await expect(page.locator('.react-flow')).toContainText('Task · STEP-001')
+})
+
+test('keeps parallel decision outcomes in numerical step order', async ({ page }) => {
+  await mockSupabase(page)
+  await signIn(page)
+
+  for (let index = 0; index < 6; index += 1) {
+    await page.getByRole('button', { name: 'Add Row' }).click()
+  }
+
+  for (let stepNumber = 1; stepNumber <= 9; stepNumber += 1) {
+    await page.getByLabel(`Department for STEP-${String(stepNumber).padStart(3, '0')}`).fill('Finance')
+  }
+
+  await page.getByLabel('Step type for STEP-003').selectOption('Task')
+  for (let stepNumber = 4; stepNumber <= 7; stepNumber += 1) {
+    const currentId = `STEP-${String(stepNumber).padStart(3, '0')}`
+    const predecessorId = `STEP-${String(stepNumber - 1).padStart(3, '0')}`
+    await page.getByLabel(`Predecessor for ${currentId}`).selectOption(predecessorId)
+  }
+  await page.getByLabel('Step type for STEP-007').selectOption('Decision Point')
+  await page.getByLabel('Condition for STEP-007').fill('Yes / No')
+  await page.getByLabel('Predecessor for STEP-008').selectOption('STEP-007')
+  await page.getByLabel('Predecessor for STEP-009').selectOption('STEP-007')
+
+  const positions = await page.locator('.react-flow__node[data-id^="STEP-"]').evaluateAll((nodes) =>
+    nodes
+      .map((node) => {
+        const id = node.getAttribute('data-id') ?? ''
+        const x = Number.parseFloat((node as HTMLElement).style.transform.match(/translate\(([-\d.]+)px/)?.[1] ?? '')
+        return { id, x }
+      })
+      .filter(({ id }) => /^STEP-\d+$/.test(id))
+      .sort((left, right) => Number(left.id.slice(5)) - Number(right.id.slice(5))),
+  )
+
+  expect(positions).toHaveLength(9)
+  for (let index = 1; index < positions.length; index += 1) {
+    expect(positions[index].x).toBeGreaterThan(positions[index - 1].x)
+  }
+})
+
 test('shows the database load error and keeps the workspace available', async ({ page }) => {
   await mockSupabase(page, { loadError: true })
   await signIn(page)
