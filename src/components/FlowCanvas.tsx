@@ -75,14 +75,14 @@ const SmoothStepEdgeWithBranchLabels = memo(function SmoothStepEdgeWithBranchLab
     targetX,
     targetY,
     targetPosition,
-    borderRadius: 12,
+    borderRadius: 16,
     offset: 0,
   })
   const isDecisionConnection = data?.isDecisionConnection === true
   const positionedLabel = isDecisionConnection
     ? sourceHandleId === 'bottom'
-      ? { x: sourceX + 20, y: sourceY + 26 }
-      : { x: sourceX + 36, y: sourceY - 12 }
+      ? { x: sourceX + 24, y: sourceY + 28 }
+      : { x: sourceX + 36, y: sourceY - 20 }
     : { x: labelX, y: labelY }
 
   return (
@@ -174,7 +174,7 @@ function getTargetHandle(
   source: Step,
   target: Step,
   stepPositions: Map<string, { x: number; y: number }>,
-): 'left' | 'target-bottom' {
+): 'left' | 'bottom' {
   if (!hasTaskBox(target)) return 'left'
 
   const sourcePosition = stepPositions.get(source.id)
@@ -184,7 +184,7 @@ function getTargetHandle(
   const sourceCenterY = sourcePosition.y + getStepNodeHeight(source) / 2
   const targetCenterY = targetPosition.y + getStepNodeHeight(target) / 2
   return sourceCenterY - targetCenterY > 1 || sourcePosition.x > targetPosition.x
-    ? 'target-bottom'
+    ? 'bottom'
     : 'left'
 }
 
@@ -221,8 +221,8 @@ function layoutSteps(
 
     graph.setGraph({
       rankdir: 'LR',
-      nodesep: 80,
-      ranksep: 120,
+      nodesep: 100,
+      ranksep: 140,
       edgesep: 50,
       marginx: 24,
       marginy: 20,
@@ -398,11 +398,11 @@ function layoutSteps(
         : { fill: '#475569', fontSize: 12, fontWeight: 600 },
       labelShowBg: true,
       labelBgStyle: isDecisionConnection
-        ? { fill: '#FFFFFF', fillOpacity: 0.95 }
+        ? { fill: '#FFFFFF', fillOpacity: 1 }
         : { fill: '#ffffff', fillOpacity: 0.96 },
       labelBgPadding: isDecisionConnection ? [6, 4] : [6, 3],
       labelBgBorderRadius: 4,
-      markerEnd: { type: MarkerType.ArrowClosed, color: '#64748b' },
+      markerEnd: { type: MarkerType.ArrowClosed, width: 15, height: 15, color: '#64748b' },
       style: { stroke: '#64748b', strokeWidth: 1.8 },
     })
   })
@@ -464,7 +464,7 @@ function ProcessStepNode({ data }: NodeProps<ProcessStepFlowNode>) {
         id="left"
         type="target"
         position={Position.Left}
-        style={{ left: isGateway ? 44 : isEvent ? 58 : 10 }}
+        style={{ left: isGateway ? 40 : isEvent ? 58 : 10 }}
         className="!size-2 !border-2 !border-white !bg-slate-500"
       />
       <div className="relative flex h-full w-full items-center justify-center">
@@ -502,7 +502,7 @@ function ProcessStepNode({ data }: NodeProps<ProcessStepFlowNode>) {
       </div>
       {hasTaskBox(step) && (
         <Handle
-          id="target-bottom"
+          id="bottom"
           type="target"
           position={Position.Bottom}
           className="!size-2 !border-2 !border-white !bg-slate-500"
@@ -521,7 +521,7 @@ function ProcessStepNode({ data }: NodeProps<ProcessStepFlowNode>) {
         id="right"
         type="source"
         position={Position.Right}
-        style={{ right: isGateway ? 44 : isEvent ? 58 : 10 }}
+        style={{ right: isGateway ? 40 : isEvent ? 58 : 10 }}
         className="!size-2 !border-2 !border-white !bg-slate-500"
       />
     </>

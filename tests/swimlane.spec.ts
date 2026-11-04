@@ -212,6 +212,14 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
 
   await expect(page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="bottom"]')).toHaveCount(1)
   await expect(page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="right"]')).toHaveCount(1)
+  await expect(page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="left"]')).toHaveCSS(
+    'left',
+    '40px',
+  )
+  await expect(page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="right"]')).toHaveCSS(
+    'right',
+    '40px',
+  )
   const yesEdge = page.locator('.react-flow__edge[data-id="edge-STEP-007-STEP-008"]')
   const noEdge = page.locator('.react-flow__edge[data-id="edge-STEP-007-STEP-009"]')
   await expect(yesEdge).toHaveClass(/decision-source-bottom/)
@@ -220,6 +228,14 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
   await expect(noEdge).toContainText('No')
   await expect(yesEdge).toHaveClass(/react-flow__edge-smoothstep/)
   await expect(noEdge).toHaveClass(/react-flow__edge-smoothstep/)
+  const markerDimensions = await yesEdge.locator('.react-flow__edge-path').evaluate((path) => {
+    const markerId = path.getAttribute('marker-end')?.match(/#([^)'"]+)/)?.[1]
+    const marker = markerId ? document.getElementById(markerId) : null
+    return marker
+      ? { width: marker.getAttribute('markerWidth'), height: marker.getAttribute('markerHeight') }
+      : null
+  })
+  expect(markerDimensions).toEqual({ width: '15', height: '15' })
   const yesHandleBox = await page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="bottom"]').boundingBox()
   const noHandleBox = await page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="right"]').boundingBox()
   const yesLabelBox = await yesEdge.locator('.react-flow__edge-textwrapper').boundingBox()
@@ -228,6 +244,7 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
   expect(noHandleBox).not.toBeNull()
   expect(yesLabelBox).not.toBeNull()
   expect(noLabelBox).not.toBeNull()
+  expect(noLabelBox!.y + noLabelBox!.height).toBeLessThan(noHandleBox!.y)
   for (const [edge, sourceHandleId, targetStepId] of [
     [yesEdge, 'bottom', 'STEP-008'],
     [noEdge, 'right', 'STEP-009'],
@@ -273,7 +290,9 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
     await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('font-weight', '600')
     await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('font-size', '12px')
     await expect(edge.locator('.react-flow__edge-textbg')).toHaveCSS('fill', 'rgb(255, 255, 255)')
-    await expect(edge.locator('.react-flow__edge-textbg')).toHaveCSS('fill-opacity', '0.95')
+    await expect(edge.locator('.react-flow__edge-textbg')).toHaveCSS('fill-opacity', '1')
+    await expect(edge.locator('.react-flow__edge-textbg')).toHaveCSS('fill', 'rgb(255, 255, 255)')
+    await expect(edge.locator('.react-flow__edge-textbg')).toHaveAttribute('rx', '4')
   }
 
   const positions = await page.locator('.react-flow__node[data-id^="STEP-"]').evaluateAll((nodes) =>
@@ -295,7 +314,7 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
   await page.getByLabel('Predecessor for STEP-004').selectOption('STEP-007')
   const loopbackEdge = page.locator('.react-flow__edge[data-id="edge-STEP-007-STEP-004"]')
   const targetBottomHandle = page.locator(
-    '.react-flow__handle[data-nodeid="STEP-004"][data-handleid="target-bottom"]',
+    '.react-flow__handle[data-nodeid="STEP-004"][data-handleid="bottom"]',
   )
   await expect(targetBottomHandle).toHaveCount(1)
   const targetHandleBox = await targetBottomHandle.boundingBox()
