@@ -30,45 +30,100 @@ interface StepMatrixProps {
   onGenerate?: (steps: Step[]) => void
 }
 
-const textFields = [
-  { key: 'id', label: 'Step ID' },
-  { key: 'stepName', label: 'Step name' },
-  { key: 'department', label: 'Department' },
-  { key: 'condition', label: 'Condition' },
-] satisfies { key: StepField; label: string }[]
+const columnWidths = ['120px', '280px', '200px', '180px', '160px', '170px', '56px']
+
+const inputClass =
+  'w-full rounded border border-transparent bg-transparent px-2 py-2 text-sm text-slate-800 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100'
 
 function getNextStepId(steps: Step[]): string {
   const highestId = steps.reduce((highest, step) => {
     const number = Number(step.id.match(/^STEP-(\d+)$/)?.[1] ?? 0)
     return Math.max(highest, number)
   }, 0)
-
   return `STEP-${String(highestId + 1).padStart(3, '0')}`
+}
+
+/** Commits the ID on blur, so renaming does not remount the row on every keystroke. */
+function StepIdInput({
+  stepId,
+  stepIds,
+  onCommit,
+}: {
+  stepId: string
+  stepIds: string[]
+  onCommit: (nextId: string) => void
+}) {
+  const [draft, setDraft] = useState(stepId)
+  const [syncedId, setSyncedId] = useState(stepId)
+  if (syncedId !== stepId) {
+    setSyncedId(stepId)
+    setDraft(stepId)
+  }
+
+  function commit() {
+    const next = draft.trim()
+    if (!next || (next !== stepId && stepIds.includes(next))) {
+      setDraft(stepId)
+      return
+    }
+    if (next !== stepId) onCommit(next)
+  }
+
+  return (
+    <input
+      aria-label={`Step ID for ${stepId}`}
+      type="text"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') event.currentTarget.blur()
+        if (event.key === 'Escape') setDraft(stepId)
+      }}
+      className={`${inputClass} font-mono text-xs text-slate-500`}
+    />
+  )
 }
 
 const StepRow = memo(function StepRow({ step, stepIds, onUpdate, onDelete }: StepRowProps) {
   return (
     <tr className="group transition-colors hover:bg-slate-50/80">
-      {textFields.slice(0, 3).map(({ key, label }) => (
-        <td key={key} className="px-3 py-2">
-          <input
-            aria-label={`${label} for ${step.id}`}
-            type="text"
-            value={step[key]}
-            onChange={(event) => onUpdate(step.id, key, event.target.value)}
-            className={`w-full rounded border border-transparent bg-transparent px-2 py-2 text-sm text-slate-800 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100 ${key === 'id' ? 'font-mono text-xs text-slate-500' : ''}`}
-          />
-        </td>
-      ))}
+      <td className="px-3 py-2">
+        <StepIdInput
+          stepId={step.id}
+          stepIds={stepIds}
+          onCommit={(nextId) => onUpdate(step.id, 'id', nextId)}
+        />
+      </td>
+      <td className="px-3 py-2">
+        <input
+          aria-label={`Step name for ${step.id}`}
+          type="text"
+          value={step.stepName}
+          onChange={(event) => onUpdate(step.id, 'stepName', event.target.value)}
+          className={inputClass}
+        />
+      </td>
+      <td className="px-3 py-2">
+        <input
+          aria-label={`Department for ${step.id}`}
+          type="text"
+          value={step.department}
+          onChange={(event) => onUpdate(step.id, 'department', event.target.value)}
+          className={inputClass}
+        />
+      </td>
       <td className="px-3 py-2">
         <select
           aria-label={`Step type for ${step.id}`}
           value={step.stepType}
           onChange={(event) => onUpdate(step.id, 'stepType', event.target.value)}
-          className="w-full rounded border border-transparent bg-transparent px-2 py-2 text-sm text-slate-800 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100"
+          className={inputClass}
         >
           {stepTypes.map((stepType) => (
-            <option key={stepType} value={stepType}>{stepType}</option>
+            <option key={stepType} value={stepType}>
+              {stepType}
+            </option>
           ))}
         </select>
       </td>
@@ -77,24 +132,27 @@ const StepRow = memo(function StepRow({ step, stepIds, onUpdate, onDelete }: Ste
           aria-label={`Predecessor for ${step.id}`}
           value={step.predecessorId}
           onChange={(event) => onUpdate(step.id, 'predecessorId', event.target.value)}
-          className="w-full rounded border border-transparent bg-transparent px-2 py-2 font-mono text-xs text-slate-700 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100"
+          className={`${inputClass} font-mono text-xs`}
         >
           <option value="">None</option>
           {stepIds
             .filter((stepId) => stepId !== step.id)
             .map((stepId) => (
-              <option key={stepId} value={stepId}>{stepId}</option>
+              <option key={stepId} value={stepId}>
+                {stepId}
+              </option>
             ))}
         </select>
       </td>
       <td className="px-3 py-2">
         <input
-          aria-label={`Condition for ${step.id}`}
+          aria-label={`Branch label for ${step.id}`}
           type="text"
           value={step.condition}
           onChange={(event) => onUpdate(step.id, 'condition', event.target.value)}
-          placeholder="e.g. Yes or No"
-          className="w-full rounded border border-transparent bg-transparent px-2 py-2 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100"
+          placeholder="Yes / No"
+          title="Label on the arrow coming into this step, e.g. Yes or No"
+          className={`${inputClass} placeholder:text-slate-400`}
         />
       </td>
       <td className="px-3 py-2 text-center">
@@ -115,44 +173,42 @@ const StepRow = memo(function StepRow({ step, stepIds, onUpdate, onDelete }: Ste
 function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
   const [generated, setGenerated] = useState(false)
   const stepIdsKey = JSON.stringify(steps.map((step) => step.id))
-  const stepIds = useMemo(
-    (): string[] => JSON.parse(stepIdsKey),
-    [stepIdsKey],
-  )
+  const stepIds = useMemo((): string[] => JSON.parse(stepIdsKey), [stepIdsKey])
 
-  const updateStep = useCallback((stepId: string, field: StepField, value: string) => {
-    setGenerated(false)
-    onStepsChange((currentSteps) => {
-      if (field === 'id') {
-        const nextId = value.trim()
-        if (
-          !nextId ||
-          currentSteps.some((step) => step.id === nextId && step.id !== stepId)
-        ) {
-          return currentSteps
+  const updateStep = useCallback(
+    (stepId: string, field: StepField, value: string) => {
+      setGenerated(false)
+      onStepsChange((currentSteps) => {
+        if (field === 'id') {
+          const nextId = value.trim()
+          if (!nextId || currentSteps.some((step) => step.id === nextId && step.id !== stepId)) {
+            return currentSteps
+          }
+          return currentSteps.map((step) => {
+            if (step.id === stepId) return { ...step, id: nextId }
+            const next = { ...step }
+            if (step.predecessorId === stepId) next.predecessorId = nextId
+            if (step.sequenceFlows?.some((flow) => flow.targetId === stepId)) {
+              next.sequenceFlows = step.sequenceFlows.map((flow) =>
+                flow.targetId === stepId ? { ...flow, targetId: nextId } : flow,
+              )
+            }
+            return next
+          })
         }
 
-        return currentSteps.map((step) => {
-          if (step.id === stepId) return { ...step, id: nextId }
-          if (step.predecessorId === stepId) {
-            return { ...step, predecessorId: nextId }
-          }
-          return step
-        })
-      }
+        if (field === 'stepType') {
+          if (!stepTypes.includes(value as StepType)) return currentSteps
+          return currentSteps.map((step) =>
+            step.id === stepId ? { ...step, stepType: value as StepType } : step,
+          )
+        }
 
-      if (field === 'stepType') {
-        if (!stepTypes.includes(value as StepType)) return currentSteps
-        return currentSteps.map((step) =>
-          step.id === stepId ? { ...step, stepType: value as StepType } : step,
-        )
-      }
-
-      return currentSteps.map((step) =>
-        step.id === stepId ? { ...step, [field]: value } : step,
-      )
-    })
-  }, [onStepsChange])
+        return currentSteps.map((step) => (step.id === stepId ? { ...step, [field]: value } : step))
+      })
+    },
+    [onStepsChange],
+  )
 
   const addStep = useCallback(() => {
     setGenerated(false)
@@ -169,16 +225,24 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
     ])
   }, [onStepsChange])
 
-  const deleteStep = useCallback((stepId: string) => {
-    setGenerated(false)
-    onStepsChange((currentSteps) =>
-      currentSteps
-        .filter((step) => step.id !== stepId)
-        .map((step) =>
-          step.predecessorId === stepId ? { ...step, predecessorId: '' } : step,
-        ),
-    )
-  }, [onStepsChange])
+  const deleteStep = useCallback(
+    (stepId: string) => {
+      setGenerated(false)
+      onStepsChange((currentSteps) =>
+        currentSteps
+          .filter((step) => step.id !== stepId)
+          .map((step) => {
+            const next = { ...step }
+            if (step.predecessorId === stepId) next.predecessorId = ''
+            if (step.sequenceFlows?.some((flow) => flow.targetId === stepId)) {
+              next.sequenceFlows = step.sequenceFlows.filter((flow) => flow.targetId !== stepId)
+            }
+            return next
+          }),
+      )
+    },
+    [onStepsChange],
+  )
 
   function generateFlowchart() {
     onGenerate?.(steps.map((step) => ({ ...step })))
@@ -205,7 +269,12 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
       </div>
 
       <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
-        <table className="w-full min-w-[980px] border-collapse text-left text-sm">
+        <table className="w-full min-w-[1140px] table-fixed border-collapse text-left text-sm">
+          <colgroup>
+            {columnWidths.map((width, index) => (
+              <col key={index} style={{ width }} />
+            ))}
+          </colgroup>
           <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
             <tr>
               <th scope="col" className="border-b border-slate-200 px-4 py-3">Step ID</th>
@@ -213,8 +282,8 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
               <th scope="col" className="border-b border-slate-200 px-4 py-3">Department</th>
               <th scope="col" className="border-b border-slate-200 px-4 py-3">Step type</th>
               <th scope="col" className="border-b border-slate-200 px-4 py-3">Predecessor</th>
-              <th scope="col" className="border-b border-slate-200 px-4 py-3">Condition</th>
-              <th scope="col" className="w-14 border-b border-slate-200 px-3 py-3">
+              <th scope="col" className="border-b border-slate-200 px-4 py-3">Branch label</th>
+              <th scope="col" className="border-b border-slate-200 px-3 py-3">
                 <span className="sr-only">Actions</span>
               </th>
             </tr>
