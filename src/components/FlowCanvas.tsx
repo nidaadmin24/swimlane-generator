@@ -21,11 +21,13 @@ import type { SequenceFlow, Step } from '../types'
 import '@xyflow/react/dist/style.css'
 
 const NODE_WIDTH = 184
-const NODE_HEIGHT = 76
-const LANE_HEIGHT = 144
+const NODE_MIN_HEIGHT = 76
+const LANE_MIN_HEIGHT = 144
 const LANE_GAP = 16
 const LABEL_WIDTH = 176
 const LANE_RIGHT_PADDING = 48
+const TITLE_CHARS_PER_LINE = 18
+const TITLE_LINE_HEIGHT = 18
 type LaneNode = Node<{ label: string; poolName: string }, 'lane'>
 type ProcessStepFlowNode = Node<{ step: Step }, 'processStep'>
 type FlowNode = LaneNode | ProcessStepFlowNode
@@ -74,7 +76,7 @@ const SmoothStepEdgeWithBranchLabels = memo(function SmoothStepEdgeWithBranchLab
     targetY,
     targetPosition,
     borderRadius: 12,
-    offset: 20,
+    offset: 0,
   })
   const isDecisionConnection = data?.isDecisionConnection === true
   const positionedLabel = isDecisionConnection
@@ -127,6 +129,32 @@ function getStepSequenceNumber(stepId: string): number | undefined {
   return match ? Number(match[1]) : undefined
 }
 
+function getStepNodeHeight(step: Step): number {
+  if (
+    step.stepType === 'Start Event' ||
+    step.stepType === 'End Event' ||
+    step.stepType === 'Decision Point' ||
+    step.stepType === 'Exclusive Gateway' ||
+    step.stepType === 'Parallel Gateway'
+  ) {
+    return NODE_MIN_HEIGHT
+  }
+
+  const titleLength = (step.stepName || 'Untitled step').length
+  const titleLines = Math.max(1, Math.ceil(titleLength / TITLE_CHARS_PER_LINE))
+  return NODE_MIN_HEIGHT + (titleLines - 1) * TITLE_LINE_HEIGHT
+}
+
+function hasTaskBox(step: Step): boolean {
+  return (
+    step.stepType !== 'Start Event' &&
+    step.stepType !== 'End Event' &&
+    step.stepType !== 'Decision Point' &&
+    step.stepType !== 'Exclusive Gateway' &&
+    step.stepType !== 'Parallel Gateway'
+  )
+}
+
 function getSourceHandle(source: Step, target: Step, branchLabel = ''): 'bottom' | 'right' {
   const condition = target.condition.trim().toLowerCase()
   if (source.stepType === 'Decision Point' && target.predecessorId === source.id) {
@@ -140,6 +168,24 @@ function getSourceHandle(source: Step, target: Step, branchLabel = ''): 'bottom'
     return 'bottom'
   }
   return 'right'
+}
+
+function getTargetHandle(
+  source: Step,
+  target: Step,
+  stepPositions: Map<string, { x: number; y: number }>,
+): 'left' | 'target-bottom' {
+  if (!hasTaskBox(target)) return 'left'
+
+  const sourcePosition = stepPositions.get(source.id)
+  const targetPosition = stepPositions.get(target.id)
+  if (!sourcePosition || !targetPosition) return 'left'
+
+  const sourceCenterY = sourcePosition.y + getStepNodeHeight(source) / 2
+  const targetCenterY = targetPosition.y + getStepNodeHeight(target) / 2
+  return sourceCenterY - targetCenterY > 1 || sourcePosition.x > targetPosition.x
+    ? 'target-bottom'
+    : 'left'
 }
 
 function layoutSteps(
@@ -167,6 +213,10 @@ function layoutSteps(
   const laneLayouts = lanes.map((lane) => {
     const departmentSteps = lane.steps
     const stepIds = new Set(departmentSteps.map((step) => step.id))
+    const laneHeight = Math.max(
+      LANE_MIN_HEIGHT,
+      ...departmentSteps.map((step) => getStepNodeHeight(step) + 40),
+    )
     const graph = new dagre.graphlib.Graph()
 
     graph.setGraph({
@@ -180,7 +230,7 @@ function layoutSteps(
     graph.setDefaultEdgeLabel(() => ({}))
 
     departmentSteps.forEach((step) => {
-      graph.setNode(step.id, { width: NODE_WIDTH, height: NODE_HEIGHT })
+      graph.setNode(step.id, { width: NODE_WIDTH, height: getStepNodeHeight(step) })
     })
 
     departmentSteps.forEach((step) => {
@@ -214,6 +264,7 @@ function layoutSteps(
       department: lane.label,
       poolName: lane.poolName,
       steps: departmentSteps,
+      height: laneHeight,
       graph,
       width: graphWidth + LABEL_WIDTH + LANE_RIGHT_PADDING,
     }
@@ -222,9 +273,9 @@ function layoutSteps(
   const canvasWidth = Math.max(760, ...laneLayouts.map((lane) => lane.width))
   const nodes: FlowNode[] = []
   const stepPositions = new Map<string, { x: number; y: number }>()
+  let laneY = 0
 
   laneLayouts.forEach((lane, laneIndex) => {
-    const laneY = laneIndex * (LANE_HEIGHT + LANE_GAP)
     const laneId = `lane-${laneIndex}`
 
     nodes.push({
@@ -232,7 +283,7 @@ function layoutSteps(
       type: 'lane',
       position: { x: 0, y: laneY },
       data: { label: lane.department, poolName: lane.poolName },
-      style: { width: canvasWidth, height: LANE_HEIGHT },
+      style: { width: canvasWidth, height: lane.height },
       draggable: false,
       selectable: false,
       connectable: false,
@@ -251,9 +302,10 @@ function layoutSteps(
       })
 
     orderedSteps.forEach(({ step }, stepIndex) => {
+      const stepHeight = getStepNodeHeight(step)
       const nodePosition = {
         x: LABEL_WIDTH + 24 + stepIndex * (NODE_WIDTH + 64),
-        y: laneY + (LANE_HEIGHT - NODE_HEIGHT) / 2,
+        y: laneY + (lane.height - stepHeight) / 2,
       }
       stepPositions.set(step.id, nodePosition)
       nodes.push({
@@ -261,9 +313,10 @@ function layoutSteps(
         type: 'processStep',
         position: nodePosition,
         data: { step },
-        style: { width: NODE_WIDTH, height: NODE_HEIGHT },
+        style: { width: NODE_WIDTH, height: stepHeight },
       })
     })
+    laneY += lane.height + LANE_GAP
   })
 
   const flows: RenderedFlow[] = []
@@ -335,7 +388,7 @@ function layoutSteps(
       source: source.id,
       target: target.id,
       sourceHandle,
-      targetHandle: 'left',
+      targetHandle: getTargetHandle(source, target, stepPositions),
       className: hasExplicitDecisionCondition ? `decision-source-${sourceHandle}` : undefined,
       type: 'smoothstep',
       data: { isDecisionConnection },
@@ -359,9 +412,7 @@ function layoutSteps(
     edges,
     width: canvasWidth,
     laneCount: laneLayouts.length,
-    height: laneLayouts.length
-      ? laneLayouts.length * LANE_HEIGHT + (laneLayouts.length - 1) * LANE_GAP
-      : 320,
+    height: laneLayouts.length ? laneY - LANE_GAP : 320,
   }
 }
 
@@ -409,7 +460,13 @@ function ProcessStepNode({ data }: NodeProps<ProcessStepFlowNode>) {
 
   return (
     <>
-      <Handle id="left" type="target" position={Position.Left} className="!size-2 !border-2 !border-white !bg-slate-500" />
+      <Handle
+        id="left"
+        type="target"
+        position={Position.Left}
+        style={{ left: isGateway ? 44 : isEvent ? 58 : 10 }}
+        className="!size-2 !border-2 !border-white !bg-slate-500"
+      />
       <div className="relative flex h-full w-full items-center justify-center">
         {isGateway ? (
           <div className="flex size-[68px] rotate-45 items-center justify-center border-2 border-amber-500 bg-amber-50 shadow-sm">
@@ -433,8 +490,8 @@ function ProcessStepNode({ data }: NodeProps<ProcessStepFlowNode>) {
             <span className="mt-1 font-mono text-[8px] font-bold text-slate-500">{step.id}</span>
           </div>
         ) : (
-          <div className={`flex h-[60px] w-[164px] flex-col items-center justify-center px-3 text-center ${shapeClass}`}>
-            <span className="max-w-full truncate text-sm font-medium text-slate-800">
+          <div className={`flex min-h-[60px] min-w-[180px] max-w-full flex-col items-center justify-center px-3 py-2 text-center ${shapeClass}`}>
+            <span className="w-full whitespace-normal break-words text-sm font-medium text-slate-800">
               {step.stepName || 'Untitled step'}
             </span>
             <span className="mt-1 max-w-full truncate font-mono text-[9px] font-bold text-slate-500">
@@ -443,11 +500,20 @@ function ProcessStepNode({ data }: NodeProps<ProcessStepFlowNode>) {
           </div>
         )}
       </div>
+      {hasTaskBox(step) && (
+        <Handle
+          id="target-bottom"
+          type="target"
+          position={Position.Bottom}
+          className="!size-2 !border-2 !border-white !bg-slate-500"
+        />
+      )}
       {isGateway && (
         <Handle
           id="bottom"
           type="source"
           position={Position.Bottom}
+          style={{ bottom: -10 }}
           className="!size-2 !border-2 !border-white !bg-slate-500"
         />
       )}
@@ -455,6 +521,7 @@ function ProcessStepNode({ data }: NodeProps<ProcessStepFlowNode>) {
         id="right"
         type="source"
         position={Position.Right}
+        style={{ right: isGateway ? 44 : isEvent ? 58 : 10 }}
         className="!size-2 !border-2 !border-white !bg-slate-500"
       />
     </>

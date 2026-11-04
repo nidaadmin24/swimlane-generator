@@ -171,6 +171,18 @@ test('updates the flowchart automatically when process steps change', async ({ p
 
   await page.getByLabel('Step type for STEP-001').selectOption('Task')
   await expect(page.locator('.react-flow')).toContainText('Task · STEP-001')
+
+  const longTitle = 'Request Pending During Review and Verification'
+  await page.getByLabel('Step name for STEP-001').fill(longTitle)
+  const taskNode = page.locator('.react-flow__node[data-id="STEP-001"]')
+  const nodeTitle = taskNode.locator('span').first()
+  await expect(nodeTitle).toHaveText(longTitle)
+  await expect(nodeTitle).toHaveCSS('white-space', 'normal')
+  const titleBox = await nodeTitle.boundingBox()
+  const nodeHeight = await taskNode.evaluate((node) => Number.parseFloat((node as HTMLElement).style.height))
+  expect(titleBox).not.toBeNull()
+  expect(titleBox!.height).toBeGreaterThan(20)
+  expect(nodeHeight).toBeGreaterThan(76)
 })
 
 test('keeps parallel decision outcomes in numerical step order', async ({ page }) => {
@@ -216,6 +228,44 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
   expect(noHandleBox).not.toBeNull()
   expect(yesLabelBox).not.toBeNull()
   expect(noLabelBox).not.toBeNull()
+  for (const [edge, sourceHandleId, targetStepId] of [
+    [yesEdge, 'bottom', 'STEP-008'],
+    [noEdge, 'right', 'STEP-009'],
+  ] as const) {
+    const sourceHandle = page.locator(
+      `.react-flow__handle[data-nodeid="STEP-007"][data-handleid="${sourceHandleId}"]`,
+    )
+    const targetHandle = page.locator(
+      `.react-flow__handle[data-nodeid="${targetStepId}"][data-handleid="left"]`,
+    )
+    const sourceBox = await sourceHandle.boundingBox()
+    const targetBox = await targetHandle.boundingBox()
+    const endpoints = await edge.locator('.react-flow__edge-path').evaluate((path) => {
+      const svgPath = path as SVGPathElement
+      const matrix = svgPath.getScreenCTM()
+      if (!matrix) return null
+      const start = svgPath.getPointAtLength(0).matrixTransform(matrix)
+      const end = svgPath.getPointAtLength(svgPath.getTotalLength()).matrixTransform(matrix)
+      return { start: { x: start.x, y: start.y }, end: { x: end.x, y: end.y } }
+    })
+
+    expect(sourceBox).not.toBeNull()
+    expect(targetBox).not.toBeNull()
+    expect(endpoints).not.toBeNull()
+    const sourceDistance = Math.hypot(
+      endpoints!.start.x -
+        (sourceHandleId === 'right' ? sourceBox!.x + sourceBox!.width : sourceBox!.x + sourceBox!.width / 2),
+      endpoints!.start.y -
+        (sourceHandleId === 'bottom' ? sourceBox!.y + sourceBox!.height : sourceBox!.y + sourceBox!.height / 2),
+    )
+    expect(sourceDistance).toBeLessThan(1)
+    expect(
+      Math.hypot(
+        endpoints!.end.x - targetBox!.x,
+        endpoints!.end.y - (targetBox!.y + targetBox!.height / 2),
+      ),
+    ).toBeLessThan(1)
+  }
   expect(yesLabelBox!.y).toBeGreaterThan(yesHandleBox!.y + yesHandleBox!.height)
   expect(noLabelBox!.x).toBeGreaterThan(noHandleBox!.x + noHandleBox!.width)
   for (const edge of [yesEdge, noEdge]) {
@@ -241,6 +291,30 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
   for (let index = 1; index < positions.length; index += 1) {
     expect(positions[index].x).toBeGreaterThan(positions[index - 1].x)
   }
+
+  await page.getByLabel('Predecessor for STEP-004').selectOption('STEP-007')
+  const loopbackEdge = page.locator('.react-flow__edge[data-id="edge-STEP-007-STEP-004"]')
+  const targetBottomHandle = page.locator(
+    '.react-flow__handle[data-nodeid="STEP-004"][data-handleid="target-bottom"]',
+  )
+  await expect(targetBottomHandle).toHaveCount(1)
+  const targetHandleBox = await targetBottomHandle.boundingBox()
+  const loopbackEndpoint = await loopbackEdge.locator('.react-flow__edge-path').evaluate((path) => {
+    const svgPath = path as SVGPathElement
+    const matrix = svgPath.getScreenCTM()
+    if (!matrix) return null
+    const end = svgPath.getPointAtLength(svgPath.getTotalLength()).matrixTransform(matrix)
+    return { x: end.x, y: end.y }
+  })
+
+  expect(targetHandleBox).not.toBeNull()
+  expect(loopbackEndpoint).not.toBeNull()
+  expect(
+    Math.hypot(
+      loopbackEndpoint!.x - (targetHandleBox!.x + targetHandleBox!.width / 2),
+      loopbackEndpoint!.y - (targetHandleBox!.y + targetHandleBox!.height),
+    ),
+  ).toBeLessThan(1)
 })
 
 test('shows the database load error and keeps the workspace available', async ({ page }) => {
