@@ -228,14 +228,20 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
   await expect(noEdge).toContainText('No')
   await expect(yesEdge).toHaveClass(/react-flow__edge-smoothstep/)
   await expect(noEdge).toHaveClass(/react-flow__edge-smoothstep/)
-  const markerDimensions = await yesEdge.locator('.react-flow__edge-path').evaluate((path) => {
+  const markerExists = await yesEdge.locator('.react-flow__edge-path').evaluate((path) => {
     const markerId = path.getAttribute('marker-end')?.match(/#([^)'"]+)/)?.[1]
-    const marker = markerId ? document.getElementById(markerId) : null
-    return marker
-      ? { width: marker.getAttribute('markerWidth'), height: marker.getAttribute('markerHeight') }
-      : null
+    return Boolean(markerId && document.getElementById(markerId))
   })
-  expect(markerDimensions).toEqual({ width: '15', height: '15' })
+  expect(markerExists).toBe(true)
+  const noMarkerExists = await noEdge.locator('.react-flow__edge-path').evaluate((path) => {
+    const markerId = path.getAttribute('marker-end')?.match(/#([^)'"]+)/)?.[1]
+    return Boolean(markerId && document.getElementById(markerId))
+  })
+  expect(noMarkerExists).toBe(true)
+  const handlesAreHidden = await page.locator('.react-flow__handle').evaluateAll((handles) =>
+    handles.every((handle) => getComputedStyle(handle).opacity === '0'),
+  )
+  expect(handlesAreHidden).toBe(true)
   const yesHandleBox = await page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="bottom"]').boundingBox()
   const noHandleBox = await page.locator('.react-flow__handle[data-nodeid="STEP-007"][data-handleid="right"]').boundingBox()
   const yesLabelBox = await yesEdge.locator('.react-flow__edge-textwrapper').boundingBox()
@@ -311,11 +317,18 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
     expect(positions[index].x).toBeGreaterThan(positions[index - 1].x)
   }
 
+  await page.getByLabel('Department for STEP-007').fill('Operations')
   await page.getByLabel('Predecessor for STEP-004').selectOption('STEP-007')
   const loopbackEdge = page.locator('.react-flow__edge[data-id="edge-STEP-007-STEP-004"]')
   const targetBottomHandle = page.locator(
-    '.react-flow__handle[data-nodeid="STEP-004"][data-handleid="bottom"]',
+    '.react-flow__handle[data-nodeid="STEP-004"][data-handleid="target-bottom"]',
   )
+  await expect(loopbackEdge).toHaveClass(/react-flow__edge-smoothstep/)
+  const loopbackHasArrowhead = await loopbackEdge.locator('.react-flow__edge-path').evaluate((path) => {
+    const markerId = path.getAttribute('marker-end')?.match(/#([^)'"]+)/)?.[1]
+    return Boolean(markerId && document.getElementById(markerId))
+  })
+  expect(loopbackHasArrowhead).toBe(true)
   await expect(targetBottomHandle).toHaveCount(1)
   const targetHandleBox = await targetBottomHandle.boundingBox()
   const loopbackEndpoint = await loopbackEdge.locator('.react-flow__edge-path').evaluate((path) => {
@@ -323,7 +336,10 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
     const matrix = svgPath.getScreenCTM()
     if (!matrix) return null
     const end = svgPath.getPointAtLength(svgPath.getTotalLength()).matrixTransform(matrix)
-    return { x: end.x, y: end.y }
+    const beforeEnd = svgPath
+      .getPointAtLength(Math.max(0, svgPath.getTotalLength() - 1))
+      .matrixTransform(matrix)
+    return { x: end.x, y: end.y, previousY: beforeEnd.y }
   })
 
   expect(targetHandleBox).not.toBeNull()
@@ -334,6 +350,7 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
       loopbackEndpoint!.y - (targetHandleBox!.y + targetHandleBox!.height),
     ),
   ).toBeLessThan(1)
+  expect(loopbackEndpoint!.y).toBeLessThan(loopbackEndpoint!.previousY)
 })
 
 test('shows the database load error and keeps the workspace available', async ({ page }) => {

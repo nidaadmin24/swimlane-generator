@@ -174,7 +174,7 @@ function getTargetHandle(
   source: Step,
   target: Step,
   stepPositions: Map<string, { x: number; y: number }>,
-): 'left' | 'bottom' {
+): 'left' | 'target-bottom' {
   if (!hasTaskBox(target)) return 'left'
 
   const sourcePosition = stepPositions.get(source.id)
@@ -183,9 +183,15 @@ function getTargetHandle(
 
   const sourceCenterY = sourcePosition.y + getStepNodeHeight(source) / 2
   const targetCenterY = targetPosition.y + getStepNodeHeight(target) / 2
-  return sourceCenterY - targetCenterY > 1 || sourcePosition.x > targetPosition.x
-    ? 'bottom'
-    : 'left'
+  const comesFromLowerLane = sourceCenterY > targetCenterY + 1
+  const returnsFromLaterNode = sourcePosition.x >= targetPosition.x + NODE_WIDTH
+  const isHorizontalDecisionNo =
+    source.stepType === 'Decision Point' &&
+    target.predecessorId === source.id &&
+    target.condition.trim().toLowerCase() === 'no'
+  if (isHorizontalDecisionNo && !comesFromLowerLane) return 'left'
+
+  return comesFromLowerLane || returnsFromLaterNode ? 'target-bottom' : 'left'
 }
 
 function layoutSteps(
@@ -402,7 +408,7 @@ function layoutSteps(
         : { fill: '#ffffff', fillOpacity: 0.96 },
       labelBgPadding: isDecisionConnection ? [6, 4] : [6, 3],
       labelBgBorderRadius: 4,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 15, height: 15, color: '#64748b' },
+      markerEnd: { type: MarkerType.ArrowClosed },
       style: { stroke: '#64748b', strokeWidth: 1.8 },
     })
   })
@@ -464,8 +470,7 @@ function ProcessStepNode({ data }: NodeProps<ProcessStepFlowNode>) {
         id="left"
         type="target"
         position={Position.Left}
-        style={{ left: isGateway ? 40 : isEvent ? 58 : 10 }}
-        className="!size-2 !border-2 !border-white !bg-slate-500"
+        style={{ left: isGateway ? 40 : isEvent ? 58 : 10, opacity: 0 }}
       />
       <div className="relative flex h-full w-full items-center justify-center">
         {isGateway ? (
@@ -502,10 +507,10 @@ function ProcessStepNode({ data }: NodeProps<ProcessStepFlowNode>) {
       </div>
       {hasTaskBox(step) && (
         <Handle
-          id="bottom"
+          id="target-bottom"
           type="target"
           position={Position.Bottom}
-          className="!size-2 !border-2 !border-white !bg-slate-500"
+          style={{ opacity: 0 }}
         />
       )}
       {isGateway && (
@@ -513,16 +518,14 @@ function ProcessStepNode({ data }: NodeProps<ProcessStepFlowNode>) {
           id="bottom"
           type="source"
           position={Position.Bottom}
-          style={{ bottom: -10 }}
-          className="!size-2 !border-2 !border-white !bg-slate-500"
+          style={{ bottom: -10, opacity: 0 }}
         />
       )}
       <Handle
         id="right"
         type="source"
         position={Position.Right}
-        style={{ right: isGateway ? 40 : isEvent ? 58 : 10 }}
-        className="!size-2 !border-2 !border-white !bg-slate-500"
+        style={{ right: isGateway ? 40 : isEvent ? 58 : 10, opacity: 0 }}
       />
     </>
   )
