@@ -58,7 +58,12 @@ interface FlowLayout {
   height: number
 }
 interface RawEdge { id: string; sourceId: string; targetId: string; label: string }
-interface FlowCanvasProps { steps: Step[]; processTitle: string }
+interface FlowCanvasProps {
+  steps: Step[]
+  processTitle: string
+  folder?: string
+  owner?: string
+}
 
 function getLaneLabel(step: Step): string {
   return step.laneName?.trim() || step.department?.trim() || 'Unassigned'
@@ -551,7 +556,7 @@ function getPngFilename(processTitle: string): string {
   return `${filename || 'swimlane-flowchart'}.png`
 }
 
-function FlowCanvas({ steps, processTitle }: FlowCanvasProps) {
+function FlowCanvas({ steps, processTitle, folder, owner }: FlowCanvasProps) {
   const layout = useMemo(() => layoutFlow(steps), [steps])
   // Scale for printing: fit the diagram on A3 landscape (about 1450 x 980 px printable area).
   const printScale = Math.min(1, 1450 / layout.width, 980 / layout.height)
@@ -603,9 +608,18 @@ function FlowCanvas({ steps, processTitle }: FlowCanvasProps) {
       style={{ '--print-scale': printScale } as CSSProperties}
     >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-5">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-900">Process flow</h2>
-          <p className="mt-0.5 text-xs text-slate-500">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            Process name
+          </p>
+          <h2 className="text-lg font-bold text-slate-900">
+            {processTitle || 'Untitled process'}
+          </h2>
+          <p className="mt-1 text-sm font-semibold text-slate-800">
+            {owner?.trim() ? `Owner unit: ${owner.trim()}` : 'Owner unit: not set'}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            {folder ? `Folder: ${folder} · ` : ''}
             {steps.length} {steps.length === 1 ? 'step' : 'steps'} across{' '}
             {layout.lanes.length} {layout.lanes.length === 1 ? 'lane' : 'lanes'}
           </p>

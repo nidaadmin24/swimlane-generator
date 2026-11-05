@@ -93,6 +93,7 @@ function App() {
   const [previewSteps, setPreviewSteps] = useState<Step[]>(initialSteps)
   const [title, setTitle] = useState(initialTitle)
   const [folder, setFolder] = useState(defaultFolder)
+  const [owner, setOwner] = useState('')
   const [previewTitle, setPreviewTitle] = useState(initialTitle)
   const [savedDiagrams, setSavedDiagrams] = useState<ProcessDiagram[]>([])
   const [currentId, setCurrentId] = useState<string | null>(null)
@@ -103,13 +104,17 @@ function App() {
   const [isFlowchartCleared, setIsFlowchartCleared] = useState(false)
   const [matrixKey, setMatrixKey] = useState(0)
   const [savedSnapshot, setSavedSnapshot] = useState<string>(
-    JSON.stringify({ title: initialTitle, folder: defaultFolder, steps: initialSteps }),
+    JSON.stringify({ title: initialTitle, folder: defaultFolder, owner: '', steps: initialSteps }),
   )
   const hasUnsavedChanges =
-    JSON.stringify({ title, folder, steps }) !== savedSnapshot
+    JSON.stringify({ title, folder, owner, steps }) !== savedSnapshot
   const validationIssues = useMemo(() => validateBpmnProcess(steps), [steps])
   const folderNames = useMemo(
     () => [...new Set([defaultFolder, ...savedDiagrams.map((diagram) => diagram.folder)])].sort(),
+    [savedDiagrams],
+  )
+  const ownerNames = useMemo(
+    () => [...new Set(savedDiagrams.map((diagram) => diagram.owner).filter((name): name is string => Boolean(name?.trim())))].sort(),
     [savedDiagrams],
   )
 
@@ -246,7 +251,7 @@ function App() {
     try {
       const data = await saveProcessDiagram(
         supabase,
-        { title: processTitle, steps, folder: folder.trim() || defaultFolder },
+        { title: processTitle, steps, folder: folder.trim() || defaultFolder, owner: owner.trim() || null },
         { id: currentId, asNew },
       )
 
@@ -255,12 +260,13 @@ function App() {
       setCurrentId(savedId)
       setTitle(data.title)
       setFolder(data.folder)
+      setOwner(data.owner ?? '')
       setSteps(savedSteps)
       setPreviewTitle(data.title)
       setPreviewSteps(savedSteps)
       setIsFlowchartCleared(false)
       setSavedSnapshot(
-        JSON.stringify({ title: data.title, folder: data.folder, steps: savedSteps }),
+        JSON.stringify({ title: data.title, folder: data.folder, owner: data.owner ?? '', steps: savedSteps }),
       )
       setSavedDiagrams((currentDiagrams) => {
         const updatedDiagrams = [
@@ -292,6 +298,7 @@ function App() {
     const newSteps = [createDefaultStep()]
     setTitle('')
     setFolder(defaultFolder)
+    setOwner('')
     skipNextAutoPreviewRef.current = true
     setSteps(newSteps)
     setPreviewSteps([])
@@ -300,7 +307,7 @@ function App() {
     setIsFlowchartCleared(true)
     setMatrixKey((currentKey) => currentKey + 1)
     setNotice(null)
-    setSavedSnapshot(JSON.stringify({ title: '', folder: defaultFolder, steps: newSteps }))
+    setSavedSnapshot(JSON.stringify({ title: '', folder: defaultFolder, owner: '', steps: newSteps }))
   }
 
   function loadProcess(event: ChangeEvent<HTMLSelectElement>) {
@@ -316,12 +323,13 @@ function App() {
     setCurrentId(String(diagram.id))
     setTitle(diagram.title)
     setFolder(diagram.folder)
+    setOwner(diagram.owner ?? '')
     const loadedSteps = diagram.steps
     setSteps(loadedSteps)
     setPreviewSteps(loadedSteps)
     setPreviewTitle(diagram.title)
     setSavedSnapshot(
-      JSON.stringify({ title: diagram.title, folder: diagram.folder, steps: loadedSteps }),
+      JSON.stringify({ title: diagram.title, folder: diagram.folder, owner: diagram.owner ?? '', steps: loadedSteps }),
     )
     setIsFlowchartCleared(false)
     setNotice({ type: 'success', message: `Loaded "${diagram.title}".` })
@@ -548,6 +556,29 @@ function App() {
                   ))}
                 </datalist>
               </label>
+              <label className="block w-[200px] text-xs font-medium text-slate-600">
+                <span className="flex min-h-5 items-center gap-2">
+                  Owner unit
+                  {!owner.trim() && (
+                    <span className="text-[11px] font-medium text-amber-700">not set</span>
+                  )}
+                </span>
+                <input
+                  type="text"
+                  list="owner-options"
+                  value={owner}
+                  onChange={(event) => setOwner(event.target.value)}
+                  placeholder="e.g. Zakat Unit"
+                  className={`mt-1.5 h-10 w-full rounded-md border bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:ring-2 focus:ring-sky-100 ${
+                    owner.trim() ? 'border-slate-300 focus:border-sky-500' : 'border-amber-300 focus:border-amber-500'
+                  }`}
+                />
+                <datalist id="owner-options">
+                  {ownerNames.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+              </label>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -670,6 +701,8 @@ function App() {
         <FlowCanvas
           steps={isFlowchartCleared ? [] : previewSteps}
           processTitle={previewTitle}
+          folder={folder}
+          owner={owner}
         />
       </main>
     </div>

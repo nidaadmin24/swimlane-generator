@@ -36,6 +36,7 @@ export interface ProcessDiagram {
   id: string | number
   title: string
   folder: string
+  owner: string | null
   steps: Step[]
   user_id: string
   created_at: string
@@ -50,6 +51,7 @@ export type Database = {
           id?: string | number
           title: string
           folder?: string
+          owner?: string | null
           steps: Step[]
           user_id?: string
           created_at?: string
@@ -58,6 +60,7 @@ export type Database = {
           id?: string | number
           title?: string
           folder?: string
+          owner?: string | null
           steps?: Step[]
           user_id?: string
           created_at?: string

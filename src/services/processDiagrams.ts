@@ -16,7 +16,7 @@ const allowedStepTypes = new Set([
   'Data/Artifact',
 ])
 
-const diagramFields = 'id, title, folder, steps, user_id, created_at'
+const diagramFields = 'id, title, folder, owner, steps, user_id, created_at'
 
 function isSequenceFlow(value: unknown): value is SequenceFlow {
   if (
@@ -89,7 +89,7 @@ export async function fetchProcessDiagrams(
 
 export async function saveProcessDiagram(
   client: SupabaseClient,
-  diagram: Pick<ProcessDiagram, 'title' | 'steps' | 'folder'>,
+  diagram: Pick<ProcessDiagram, 'title' | 'steps' | 'folder' | 'owner'>,
   options: { id: string | null; asNew: boolean },
 ): Promise<ProcessDiagram> {
   const folder = normaliseFolder(diagram.folder)
@@ -98,6 +98,7 @@ export async function saveProcessDiagram(
     title: diagram.title,
     steps: diagram.steps,
     folder,
+    owner: diagram.owner?.trim() || null,
   }
 
   let query
