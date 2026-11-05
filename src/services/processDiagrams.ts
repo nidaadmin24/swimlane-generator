@@ -1,5 +1,22 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database, ProcessDiagram, SequenceFlow, Step } from '../types'
+import type { ProcessDiagram, SequenceFlow, Step } from '../types'
+
+const DEFAULT_FOLDER = 'General'
+
+const allowedStepTypes = new Set([
+  'Start Event',
+  'Task',
+  'User Task',
+  'Service Task',
+  'Manual Task',
+  'Decision Point',
+  'Exclusive Gateway',
+  'Parallel Gateway',
+  'End Event',
+  'Data/Artifact',
+])
+
+const diagramFields = 'id, title, folder, steps, user_id, created_at'
 
 function isSequenceFlow(value: unknown): value is SequenceFlow {
   if (
@@ -24,48 +41,99 @@ function isSequenceFlow(value: unknown): value is SequenceFlow {
   return optionalFieldsAreValid
 }
 
+export function isStepList(value: unknown): value is Step[] {
+  return Array.isArray(value) && value.every((step) =>
+    typeof step === 'object' &&
+    step !== null &&
+    typeof step.id === 'string' &&
+    typeof step.stepName === 'string' &&
+    typeof step.department === 'string' &&
+    typeof step.stepType === 'string' &&
+    allowedStepTypes.has(step.stepType) &&
+    typeof step.predecessorId === 'string' &&
+    typeof step.condition === 'string' &&
+    (step.poolId === undefined || typeof step.poolId === 'string') &&
+    (step.poolName === undefined || typeof step.poolName === 'string') &&
+    (step.laneId === undefined || typeof step.laneId === 'string') &&
+    (step.laneName === undefined || typeof step.laneName === 'string') &&
+    (step.sequenceFlows === undefined ||
+      (Array.isArray(step.sequenceFlows) && step.sequenceFlows.every(isSequenceFlow))),
+  )
+}
+
+function normaliseFolder(folder: string | null | undefined): string {
+  const trimmed = folder?.trim()
+  return trimmed ? trimmed : DEFAULT_FOLDER
+}
+
 export async function fetchProcessDiagrams(
-  client: SupabaseClient<Database>,
+  client: SupabaseClient,
 ): Promise<ProcessDiagram[]> {
   const { data, error } = await client
     .from('process_diagrams')
-    .select('id, title, steps, user_id, created_at')
+    .select(diagramFields)
+    .order('folder', { ascending: true })
     .order('title', { ascending: true })
 
   if (error) throw error
-  for (const diagram of data ?? []) {
+
+  const diagrams = (data ?? []) as ProcessDiagram[]
+  for (const diagram of diagrams) {
     if (!isStepList(diagram.steps)) {
       throw new Error(`Saved flowchart "${diagram.title}" has invalid step data.`)
     }
   }
-  return data ?? []
+
+  return diagrams
 }
 
 export async function saveProcessDiagram(
-  client: SupabaseClient<Database>,
-  diagram: Pick<ProcessDiagram, 'title' | 'steps'>,
+  client: SupabaseClient,
+  diagram: Pick<ProcessDiagram, 'title' | 'steps' | 'folder'>,
   options: { id: string | null; asNew: boolean },
 ): Promise<ProcessDiagram> {
-  const fields = 'id, title, steps, user_id, created_at'
-  const query = options.id && !options.asNew
-    ? client
-        .from('process_diagrams')
-        .update({ title: diagram.title, steps: diagram.steps })
-        .eq('id', options.id)
-    : client
-        .from('process_diagrams')
-        .insert({ title: diagram.title, steps: diagram.steps })
+  const folder = normaliseFolder(diagram.folder)
 
-  const { data, error } = await query.select(fields).single()
-  if (error) throw error
-  if (!isStepList(data.steps)) {
-    throw new Error(`Saved flowchart "${data.title}" has invalid step data.`)
+  const payload = {
+    title: diagram.title,
+    steps: diagram.steps,
+    folder,
   }
-  return data
+
+  let query
+
+  if (options.id && !options.asNew) {
+    // Updates are checked by the "manage their own" policy, so user_id is not needed here.
+    query = client
+      .from('process_diagrams')
+      .update(payload)
+      .eq('id', options.id)
+  } else {
+    // New rows must be owned by the signed-in user, or the owner policy blocks them.
+    const { data: userData, error: userError } = await client.auth.getUser()
+    if (userError) throw userError
+
+    const userId = userData.user?.id
+    if (!userId) throw new Error('You must be signed in to save a flowchart.')
+
+    query = client
+      .from('process_diagrams')
+      .insert({ ...payload, user_id: userId })
+  }
+
+  const { data, error } = await query.select(diagramFields).single()
+  if (error) throw error
+
+  const saved = data as ProcessDiagram
+  if (!isStepList(saved.steps)) {
+    throw new Error(`Saved flowchart "${saved.title}" has invalid step data.`)
+  }
+
+  return saved
 }
 
 export async function deleteProcessDiagram(
-  client: SupabaseClient<Database>,
+  client: SupabaseClient,
   id: string,
 ): Promise<void> {
   const { error } = await client
@@ -76,34 +144,15 @@ export async function deleteProcessDiagram(
   if (error) throw error
 }
 
-export function isStepList(value: unknown): value is Step[] {
-  const allowedTypes = new Set([
-    'Start Event',
-    'Task',
-    'User Task',
-    'Service Task',
-    'Manual Task',
-    'Decision Point',
-    'Exclusive Gateway',
-    'Parallel Gateway',
-    'End Event',
-    'Data/Artifact',
-  ])
-  return Array.isArray(value) && value.every((step) =>
-    typeof step === 'object' &&
-    step !== null &&
-    typeof step.id === 'string' &&
-    typeof step.stepName === 'string' &&
-    typeof step.department === 'string' &&
-    typeof step.stepType === 'string' &&
-    allowedTypes.has(step.stepType) &&
-    typeof step.predecessorId === 'string' &&
-    typeof step.condition === 'string' &&
-    (step.poolId === undefined || typeof step.poolId === 'string') &&
-    (step.poolName === undefined || typeof step.poolName === 'string') &&
-    (step.laneId === undefined || typeof step.laneId === 'string') &&
-    (step.laneName === undefined || typeof step.laneName === 'string') &&
-    (step.sequenceFlows === undefined ||
-      (Array.isArray(step.sequenceFlows) && step.sequenceFlows.every(isSequenceFlow))),
-  )
+export async function moveProcessDiagramToFolder(
+  client: SupabaseClient,
+  id: string,
+  folder: string,
+): Promise<void> {
+  const { error } = await client
+    .from('process_diagrams')
+    .update({ folder: normaliseFolder(folder) })
+    .eq('id', id)
+
+  if (error) throw error
 }

@@ -1,19 +1,16 @@
-import { memo, useMemo, useRef, useState } from 'react'
+import { memo, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { toPng } from 'html-to-image'
 import { Download, Maximize2, Minus, Plus, Printer, X } from 'lucide-react'
 import type { Step } from '../types'
 
-/* ------------------------------------------------------------------ */
-/* Layout constants                                                    */
-/* ------------------------------------------------------------------ */
 const TASK_W = 176
 const TASK_MIN_H = 64
 const TASK_LINE_H = 17
-const TASK_CHARS_PER_LINE = 22
+const TASK_TEXT_MAX_CHARS = 22
 const EVENT_D = 56
 const GATEWAY_D = 64
-const LABEL_BLOCK_H = 40 // space above events/gateways for their name
-const LABEL_W = 160 // lane header width
+const LABEL_BLOCK_H = 50
+const LABEL_W = 160
 const LEFT_PAD = 24
 const COL_GAP = 88
 const COL_W = TASK_W + COL_GAP
@@ -24,36 +21,27 @@ const MIN_LANE_H = 120
 const EXIT_GAP = 12
 const CHANNEL_OFFSET = 14
 const CHANNEL_SPACING = 9
+const PORT_SPACING = 10
+const PORT_MARGIN = 8
 const CORNER_RADIUS = 10
 const MERGE_JITTER = 6
 const MIN_CANVAS_W = 820
 const CANVAS_RIGHT_PAD = 60
 const MIN_ZOOM = 0.4
 const MAX_ZOOM = 1.5
+const LANE_TINTS = [
+  { body: '#f8fafc', header: '#e2e8f0' },
+  { body: '#f0f9ff', header: '#e0f2fe' },
+  { body: '#f0fdf4', header: '#dcfce7' },
+  { body: '#fefce8', header: '#fef9c3' },
+  { body: '#faf5ff', header: '#f3e8ff' },
+]
 
-/* ------------------------------------------------------------------ */
-/* Types                                                               */
-/* ------------------------------------------------------------------ */
 type NodeKind = 'start' | 'end' | 'task' | 'artifact' | 'gateway' | 'parallel'
 
-interface Point {
-  x: number
-  y: number
-}
-
-interface Box {
-  x: number
-  y: number
-  w: number
-  h: number
-}
-
-interface PositionedNode {
-  step: Step
-  kind: NodeKind
-  box: Box
-}
-
+interface Point { x: number; y: number }
+interface Box { x: number; y: number; w: number; h: number }
+interface PositionedNode { step: Step; kind: NodeKind; box: Box }
 interface PositionedEdge {
   id: string
   label: string
@@ -61,15 +49,7 @@ interface PositionedEdge {
   labelAt: Point
   labelAnchor: 'start' | 'middle'
 }
-
-interface PositionedLane {
-  key: string
-  label: string
-  poolName: string
-  top: number
-  height: number
-}
-
+interface PositionedLane { key: string; label: string; poolName: string; top: number; height: number }
 interface FlowLayout {
   nodes: PositionedNode[]
   edges: PositionedEdge[]
@@ -77,41 +57,22 @@ interface FlowLayout {
   width: number
   height: number
 }
+interface RawEdge { id: string; sourceId: string; targetId: string; label: string }
+interface FlowCanvasProps { steps: Step[]; processTitle: string }
 
-interface RawEdge {
-  id: string
-  sourceId: string
-  targetId: string
-  label: string
-}
-
-interface FlowCanvasProps {
-  steps: Step[]
-  processTitle: string
-}
-
-/* ------------------------------------------------------------------ */
-/* Helpers: classification and sizing                                  */
-/* ------------------------------------------------------------------ */
 function getLaneLabel(step: Step): string {
   return step.laneName?.trim() || step.department?.trim() || 'Unassigned'
 }
 
 function getKind(step: Step): NodeKind {
   switch (step.stepType) {
-    case 'Start Event':
-      return 'start'
-    case 'End Event':
-      return 'end'
+    case 'Start Event': return 'start'
+    case 'End Event': return 'end'
     case 'Decision Point':
-    case 'Exclusive Gateway':
-      return 'gateway'
-    case 'Parallel Gateway':
-      return 'parallel'
-    case 'Data/Artifact':
-      return 'artifact'
-    default:
-      return 'task'
+    case 'Exclusive Gateway': return 'gateway'
+    case 'Parallel Gateway': return 'parallel'
+    case 'Data/Artifact': return 'artifact'
+    default: return 'task'
   }
 }
 
@@ -119,12 +80,33 @@ function hasLabelAbove(kind: NodeKind): boolean {
   return kind !== 'task' && kind !== 'artifact'
 }
 
+function countWrappedLines(text: string, maxChars: number): number {
+  const words = text.split(/\s+/).filter(Boolean)
+  if (words.length === 0) return 1
+  let lines = 1
+  let current = 0
+  for (const word of words) {
+    if (current === 0) {
+      current = word.length
+    } else if (current + 1 + word.length <= maxChars) {
+      current += 1 + word.length
+    } else {
+      lines += 1
+      current = word.length
+    }
+  }
+  return lines
+}
+
 function getShapeSize(step: Step, kind: NodeKind): { w: number; h: number } {
   if (kind === 'start' || kind === 'end') return { w: EVENT_D, h: EVENT_D }
   if (kind === 'gateway' || kind === 'parallel') return { w: GATEWAY_D, h: GATEWAY_D }
   const title = step.stepName?.trim() || 'Untitled step'
-  const lines = Math.max(1, Math.ceil(title.length / TASK_CHARS_PER_LINE))
-  return { w: TASK_W, h: Math.max(TASK_MIN_H, 30 + lines * TASK_LINE_H) }
+  const lines = countWrappedLines(title, TASK_TEXT_MAX_CHARS)
+  return {
+    w: TASK_W,
+    h: Math.max(TASK_MIN_H, lines * TASK_LINE_H + 22 + 20),
+  }
 }
 
 function getNodeTitle(step: Step, kind: NodeKind): string {
@@ -148,9 +130,6 @@ function getBranchLabelColor(label: string): string {
   return '#334155'
 }
 
-/* ------------------------------------------------------------------ */
-/* Graph: edges and ranks                                              */
-/* ------------------------------------------------------------------ */
 function collectEdges(steps: Step[], stepsById: Map<string, Step>): RawEdge[] {
   const edges = new Map<string, RawEdge>()
   const keyOf = (source: string, target: string) => `${source}\u0000${target}`
@@ -184,10 +163,6 @@ function collectEdges(steps: Step[], stepsById: Map<string, Step>): RawEdge[] {
   return [...edges.values()]
 }
 
-/**
- * Column = longest path from a root. Cycles (loops back to an earlier step)
- * are detected by DFS and ignored for ranking, so the layout stays acyclic.
- */
 function computeRanks(ids: string[], edges: RawEdge[]): Map<string, number> {
   const outgoing = new Map<string, string[]>()
   const hasIncoming = new Set<string>()
@@ -226,9 +201,6 @@ function computeRanks(ids: string[], edges: RawEdge[]): Map<string, number> {
   return rank
 }
 
-/* ------------------------------------------------------------------ */
-/* Edge routing                                                        */
-/* ------------------------------------------------------------------ */
 function isForwardRoute(source: Box, target: Box): boolean {
   return target.x >= source.x + source.w + EXIT_GAP
 }
@@ -236,20 +208,25 @@ function isForwardRoute(source: Box, target: Box): boolean {
 function routeEdge(
   source: Box,
   target: Box,
-  options: { exitsFromBottom: boolean; index: number; backSlot: number },
+  options: {
+    exitsFromBottom: boolean
+    index: number
+    backSlot: number
+    sourceShift: number
+    targetShift: number
+  },
 ): Point[] {
-  const sCx = source.x + source.w / 2
+  const sCx = source.x + source.w / 2 + options.sourceShift
   const sCy = source.y + source.h / 2
   const sRight = source.x + source.w
   const sTop = source.y
   const sBottom = source.y + source.h
-  const tCx = target.x + target.w / 2
+  const tCx = target.x + target.w / 2 + options.targetShift
   const tCy = target.y + target.h / 2
   const tTop = target.y
   const tBottom = target.y + target.h
 
   if (isForwardRoute(source, target)) {
-    // "Yes" from a gateway leaves through the bottom vertex and drops to the target row.
     if (options.exitsFromBottom && tCy > sBottom) {
       return [
         { x: sCx, y: sBottom },
@@ -270,7 +247,6 @@ function routeEdge(
     if (Math.abs(sCy - tCy) < 1) {
       return [{ x: sRight, y: sCy }, { x: target.x, y: tCy }]
     }
-    // Vertical run sits in the gap right after the source column.
     const midX = sRight + COL_GAP / 2 + ((options.index % 3) - 1) * MERGE_JITTER
     return [
       { x: sRight, y: sCy },
@@ -280,7 +256,6 @@ function routeEdge(
     ]
   }
 
-  // Back edges (loops) run through a channel above or below the lanes.
   const offset = (options.backSlot % 3) * CHANNEL_SPACING
   const below = tCy >= sCy
 
@@ -346,10 +321,6 @@ function getRoundedOrthogonalPath(points: Point[], radius: number): string {
   const last = compact[compact.length - 1]
   return `${path} L ${last.x},${last.y}`
 }
-
-/* ------------------------------------------------------------------ */
-/* Full layout pass                                                    */
-/* ------------------------------------------------------------------ */
 function layoutFlow(steps: Step[]): FlowLayout {
   const stepsById = new Map<string, Step>(steps.map((step) => [step.id, step]))
   const kinds = new Map<string, NodeKind>(steps.map((step) => [step.id, getKind(step)]))
@@ -357,7 +328,6 @@ function layoutFlow(steps: Step[]): FlowLayout {
     steps.map((step) => [step.id, getShapeSize(step, kinds.get(step.id)!)]),
   )
 
-  // 1. Lanes, grouped by pool + lane, in order of first appearance.
   const laneMap = new Map<string, { key: string; label: string; poolName: string; stepIds: string[] }>()
   const laneKeyOf = new Map<string, string>()
   steps.forEach((step) => {
@@ -373,7 +343,6 @@ function layoutFlow(steps: Step[]): FlowLayout {
   })
   const lanes = [...laneMap.values()]
 
-  // 2. Columns from the flow graph, not from step numbers.
   const edges = collectEdges(steps, stepsById)
   const rank = computeRanks(steps.map((step) => step.id), edges)
 
@@ -381,7 +350,6 @@ function layoutFlow(steps: Step[]): FlowLayout {
     steps.map((step) => [step.id, FIRST_COL_CX + (rank.get(step.id) ?? 0) * COL_W]),
   )
 
-  // Resolve collisions when two steps in one lane share a column.
   lanes.forEach((lane) => {
     let previousRight = Number.NEGATIVE_INFINITY
     ;[...lane.stepIds]
@@ -394,8 +362,6 @@ function layoutFlow(steps: Step[]): FlowLayout {
       })
   })
 
-  // 3. Lane bands. Shapes sit on a shared centerline near the bottom of each lane,
-  //    leaving room above for labels.
   let top = 0
   const laneLayouts: PositionedLane[] = []
   const laneCenterY = new Map<string, number>()
@@ -408,7 +374,6 @@ function layoutFlow(steps: Step[]): FlowLayout {
     top += height
   })
 
-  // 4. Node boxes.
   const nodes = new Map<string, PositionedNode>()
   steps.forEach((step) => {
     const kind = kinds.get(step.id)!
@@ -418,7 +383,44 @@ function layoutFlow(steps: Step[]): FlowLayout {
     nodes.set(step.id, { step, kind, box: { x: cx - w / 2, y: cy - h / 2, w, h } })
   })
 
-  // 5. Edge routes.
+  const MAX_SHIFT = (node: PositionedNode) =>
+    Math.max(0, Math.min(node.box.w, node.box.h) / 2 - PORT_MARGIN)
+
+  const centreOf = (node: PositionedNode) => ({
+    x: node.box.x + node.box.w / 2,
+    y: node.box.y + node.box.h / 2,
+  })
+
+  const portShifts = new Map<string, number>()
+  const endsByNode = new Map<string, { key: string; otherId: string }[]>()
+
+  edges.forEach((edge) => {
+    if (!nodes.has(edge.sourceId) || !nodes.has(edge.targetId)) return
+    const add = (nodeId: string, entry: { key: string; otherId: string }) =>
+      endsByNode.set(nodeId, [...(endsByNode.get(nodeId) ?? []), entry])
+    add(edge.sourceId, { key: `${edge.id}|s`, otherId: edge.targetId })
+    add(edge.targetId, { key: `${edge.id}|t`, otherId: edge.sourceId })
+  })
+
+  endsByNode.forEach((ends, nodeId) => {
+    const owner = nodes.get(nodeId)!
+    if (owner.kind === 'gateway' || owner.kind === 'parallel') {
+      ends.forEach((end) => portShifts.set(end.key, 0))
+      return
+    }
+    const sorted = [...ends].sort((a, b) => {
+      const pa = centreOf(nodes.get(a.otherId)!)
+      const pb = centreOf(nodes.get(b.otherId)!)
+      return pa.y - pb.y || pa.x - pb.x
+    })
+    const limit = MAX_SHIFT(owner)
+    const n = sorted.length
+    sorted.forEach((end, i) => {
+      const raw = (i - (n - 1) / 2) * PORT_SPACING
+      portShifts.set(end.key, Math.max(-limit, Math.min(limit, raw)))
+    })
+  })
+
   let backSlot = 0
   const positionedEdges: PositionedEdge[] = []
   edges.forEach((edge, index) => {
@@ -431,6 +433,8 @@ function layoutFlow(steps: Step[]): FlowLayout {
       exitsFromBottom: source.kind === 'gateway' && edge.label === 'Yes',
       index,
       backSlot,
+      sourceShift: portShifts.get(`${edge.id}|s`) ?? 0,
+      targetShift: portShifts.get(`${edge.id}|t`) ?? 0,
     })
     if (!forward) backSlot += 1
 
@@ -456,9 +460,6 @@ function layoutFlow(steps: Step[]): FlowLayout {
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* Rendering                                                           */
-/* ------------------------------------------------------------------ */
 function NodeView({ node }: { node: PositionedNode }) {
   const { step, kind, box } = node
   const title = getNodeTitle(step, kind)
@@ -472,16 +473,16 @@ function NodeView({ node }: { node: PositionedNode }) {
           : ''
     return (
       <div
-        className={`absolute flex flex-col items-center justify-center rounded-md border px-3 py-2 text-center shadow-sm ${
+        className={`absolute flex flex-col items-center justify-center rounded-md border px-3 py-2 text-center ${
           kind === 'artifact' ? 'border-amber-400 bg-amber-50' : 'border-sky-400 bg-white'
         }`}
         style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
         title={`${step.stepType}: ${title}`}
       >
-        <span className="w-full break-words text-[13px] font-medium leading-[17px] text-slate-800">
+        <span className="block w-full whitespace-normal break-words text-center text-[13px] font-medium leading-[17px] text-slate-800">
           {title}
         </span>
-        <span className="mt-1 font-mono text-[10px] text-slate-500">
+        <span className="mt-1 font-mono text-[12px] font-semibold text-indigo-700">
           {typeTag}
           {step.id}
         </span>
@@ -499,10 +500,10 @@ function NodeView({ node }: { node: PositionedNode }) {
         height: LABEL_BLOCK_H - 6,
       }}
     >
-      <span className="max-w-full break-words text-[11px] font-semibold leading-tight text-slate-800">
+      <span className="max-w-full break-words text-[13px] font-medium leading-[17px] text-slate-800">
         {title}
       </span>
-      <span className="font-mono text-[9px] text-slate-500">{step.id}</span>
+      <span className="font-mono text-[12px] font-semibold text-indigo-700">{step.id}</span>
     </div>
   )
 
@@ -523,7 +524,6 @@ function NodeView({ node }: { node: PositionedNode }) {
     )
   }
 
-  // Gateways: the diamond's vertices sit exactly on the box edges, so ports line up.
   return (
     <>
       <div className="absolute" style={{ left: box.x, top: box.y, width: box.w, height: box.h }}>
@@ -543,8 +543,18 @@ function NodeView({ node }: { node: PositionedNode }) {
   )
 }
 
+function getPngFilename(processTitle: string): string {
+  const filename = processTitle
+    .trim()
+    .replace(/[<>:"/\\|?*]/g, '-')
+    .replace(/[. ]+$/, '')
+  return `${filename || 'swimlane-flowchart'}.png`
+}
+
 function FlowCanvas({ steps, processTitle }: FlowCanvasProps) {
   const layout = useMemo(() => layoutFlow(steps), [steps])
+  // Scale for printing: fit the diagram on A3 landscape (about 1450 x 980 px printable area).
+  const printScale = Math.min(1, 1450 / layout.width, 980 / layout.height)
   const canvasRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(1)
   const [isExporting, setIsExporting] = useState(false)
@@ -588,7 +598,10 @@ function FlowCanvas({ steps, processTitle }: FlowCanvasProps) {
     'inline-flex min-h-9 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50'
 
   return (
-    <section className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+    <section
+      className="print-flow overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm"
+      style={{ '--print-scale': printScale } as CSSProperties}
+    >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-5">
         <div>
           <h2 className="text-sm font-semibold text-slate-900">Process flow</h2>
@@ -598,7 +611,7 @@ function FlowCanvas({ steps, processTitle }: FlowCanvasProps) {
           </p>
         </div>
 
-        <div className="flex flex-col items-end gap-1">
+        <div className="print-hide flex flex-col items-end gap-1">
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex items-center rounded-md border border-slate-300 bg-white">
               <button
@@ -661,14 +674,13 @@ function FlowCanvas({ steps, processTitle }: FlowCanvasProps) {
       <div className="bg-slate-50 p-3 sm:p-5">
         {steps.length ? (
           <div
-            className="overflow-auto rounded border border-slate-300 bg-white"
+            className="print-scroll overflow-auto rounded border border-slate-300 bg-white"
             style={{ maxHeight: 760 }}
           >
-            {/* Outer box reserves the scaled size so scrollbars stay correct at any zoom. */}
-            <div style={{ width: layout.width * zoom, height: layout.height * zoom }}>
+            <div className="print-sizer" style={{ width: layout.width * zoom, height: layout.height * zoom }}>
               <div
                 ref={canvasRef}
-                className="relative bg-white"
+                className="print-scale relative bg-white"
                 style={{
                   width: layout.width,
                   height: layout.height,
@@ -676,30 +688,32 @@ function FlowCanvas({ steps, processTitle }: FlowCanvasProps) {
                   transformOrigin: 'top left',
                 }}
               >
-                {layout.lanes.map((lane) => (
-                  <div
-                    key={lane.key}
-                    className="absolute left-0 right-0 flex border-b border-slate-300"
-                    style={{ top: lane.top, height: lane.height }}
-                  >
+                {layout.lanes.map((lane, index) => {
+                  const tint = LANE_TINTS[index % LANE_TINTS.length]
+                  return (
                     <div
-                      className="flex shrink-0 items-center border-r border-slate-300 bg-slate-50 px-4"
-                      style={{ width: LABEL_W }}
+                      key={lane.key}
+                      className="absolute left-0 right-0 flex border-b border-[#cbd5e1]"
+                      style={{ top: lane.top, height: lane.height, backgroundColor: tint.body }}
                     >
-                      <div className="min-w-0">
-                        {lane.poolName && (
-                          <span className="block truncate text-[9px] font-semibold uppercase tracking-wider text-sky-700">
-                            {lane.poolName}
+                      <div
+                        className="flex shrink-0 items-center border-r border-[#cbd5e1] px-4"
+                        style={{ width: LABEL_W, backgroundColor: tint.header }}
+                      >
+                        <div className="min-w-0">
+                          {lane.poolName && (
+                            <span className="block truncate text-[9px] font-semibold uppercase tracking-wider text-sky-700">
+                              {lane.poolName}
+                            </span>
+                          )}
+                          <span className="block break-words text-base font-bold uppercase tracking-wide text-slate-700 leading-snug">
+                            {lane.label}
                           </span>
-                        )}
-                        <span className="block break-words text-sm font-bold uppercase tracking-wide text-slate-600">
-                          {lane.label}
-                        </span>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex-1 bg-[linear-gradient(to_right,#f1f5f9_1px,transparent_1px)] bg-[size:32px_100%]" />
-                  </div>
-                ))}
+                  )
+                })}
 
                 <svg
                   className="pointer-events-none absolute left-0 top-0"
@@ -734,8 +748,8 @@ function FlowCanvas({ steps, processTitle }: FlowCanvasProps) {
                           x={edge.labelAt.x}
                           y={edge.labelAt.y}
                           textAnchor={edge.labelAnchor}
-                          fontSize={11}
-                          fontWeight={700}
+                          fontSize={14}
+                          fontWeight={800}
                           fill={getBranchLabelColor(edge.label)}
                           stroke="#ffffff"
                           strokeWidth={4}
@@ -760,16 +774,32 @@ function FlowCanvas({ steps, processTitle }: FlowCanvasProps) {
           </div>
         )}
       </div>
+      <footer className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-slate-200 px-4 py-3 text-xs text-slate-600 sm:px-5">
+        <span className="font-semibold text-slate-700">Legend</span>
+        <span className="inline-flex items-center gap-2">
+          <span className="inline-block size-3.5 rounded-full border-2 border-emerald-500 bg-emerald-50" />
+          Start
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="inline-block h-3.5 w-5 rounded-sm border border-sky-400 bg-white" />
+          Task
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="inline-block size-3.5 rotate-45 border-2 border-amber-600 bg-amber-50" />
+          Decision
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="inline-block size-3.5 rounded-full border-[3px] border-rose-600 bg-rose-50" />
+          End
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="font-bold text-emerald-700">Yes</span>
+          <span className="font-bold text-rose-700">No</span>
+          Branch labels
+        </span>
+      </footer>
     </section>
   )
-}
-
-function getPngFilename(processTitle: string): string {
-  const filename = processTitle
-    .trim()
-    .replace(/[<>:"/\\|?*]/g, '-')
-    .replace(/[. ]+$/, '')
-  return `${filename || 'swimlane-flowchart'}.png`
 }
 
 export default memo(FlowCanvas)

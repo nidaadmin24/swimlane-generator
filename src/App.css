@@ -182,3 +182,37 @@
     border-right-color: var(--border);
   }
 }
+@media print {
+  @page {
+    size: A3 landscape;
+    margin: 10mm;
+  }
+
+  body {
+    background: #ffffff !important;
+  }
+
+  header,
+  .print-hide,
+  main > *:not(.print-flow) {
+    display: none !important;
+  }
+
+  .print-flow,
+  .print-flow *,
+  .print-scroll {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
+  .print-sizer {
+    width: auto !important;
+    height: auto !important;
+  }
+
+  .print-scale {
+    transform: none !important;
+    zoom: var(--print-scale) !important;
+    transform-origin: top left;
+  }
+}

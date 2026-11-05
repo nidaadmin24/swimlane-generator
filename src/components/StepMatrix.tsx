@@ -17,9 +17,81 @@ const stepTypes = [
 
 type StepField = keyof Step
 
+type StepWarning = { stepId: string; message: string }
+
+function computeWarnings(steps: Step[]): StepWarning[] {
+  const stepById = new Map(steps.map((step) => [step.id, step]))
+  const successorCounts = new Map<string, number>()
+  const otherSuccessorCounts = new Map<string, number>()
+  const departmentCounts = new Map<string, number>()
+
+  for (const step of steps) {
+    if (step.predecessorId) {
+      successorCounts.set(step.predecessorId, (successorCounts.get(step.predecessorId) ?? 0) + 1)
+      if (step.predecessorId !== step.id) {
+        otherSuccessorCounts.set(
+          step.predecessorId,
+          (otherSuccessorCounts.get(step.predecessorId) ?? 0) + 1,
+        )
+      }
+    }
+    const department = step.department.trim().toLocaleLowerCase()
+    if (department) {
+      departmentCounts.set(department, (departmentCounts.get(department) ?? 0) + 1)
+    }
+  }
+
+  const warnings: StepWarning[] = []
+  for (const step of steps) {
+    const isDecision =
+      step.stepType === 'Decision Point' || step.stepType === 'Exclusive Gateway'
+    const predecessor = stepById.get(step.predecessorId)
+    const predecessorIsDecision =
+      predecessor?.stepType === 'Decision Point' || predecessor?.stepType === 'Exclusive Gateway'
+
+    if (isDecision && (successorCounts.get(step.id) ?? 0) < 2) {
+      warnings.push({
+        stepId: step.id,
+        message: 'Decision needs two outgoing branches (Yes and No).',
+      })
+    }
+    if (/^(yes|no)$/i.test(step.condition.trim()) && !predecessorIsDecision) {
+      warnings.push({
+        stepId: step.id,
+        message: 'Yes/No label is only used after a decision.',
+      })
+    }
+    if (step.stepType !== 'Start Event' && !step.predecessorId.trim()) {
+      warnings.push({ stepId: step.id, message: 'No incoming step. Set a predecessor.' })
+    }
+    if (
+      step.stepType !== 'End Event' &&
+      step.stepType !== 'Decision Point' &&
+      step.stepType !== 'Exclusive Gateway' &&
+      (otherSuccessorCounts.get(step.id) ?? 0) === 0
+    ) {
+      warnings.push({ stepId: step.id, message: 'Dead end. Nothing follows this step.' })
+    }
+    if (!step.stepName.trim()) {
+      warnings.push({ stepId: step.id, message: 'Step name is empty.' })
+    }
+    const department = step.department.trim().toLocaleLowerCase()
+    if (department && departmentCounts.get(department) === 1) {
+      warnings.push({
+        stepId: step.id,
+        message: 'Department appears only once. Check for a typo.',
+      })
+    }
+  }
+  return warnings
+}
+
 interface StepRowProps {
   step: Step
   stepIds: string[]
+  stepLabels: Map<string, string>
+  isAfterDecision: boolean
+  hasWarning: boolean
   onUpdate: (stepId: string, field: StepField, value: string) => void
   onDelete: (stepId: string) => void
 }
@@ -80,14 +152,26 @@ function StepIdInput({
         if (event.key === 'Enter') event.currentTarget.blur()
         if (event.key === 'Escape') setDraft(stepId)
       }}
-      className={`${inputClass} font-mono text-xs text-slate-500`}
+      className={inputClass}
     />
   )
 }
 
-const StepRow = memo(function StepRow({ step, stepIds, onUpdate, onDelete }: StepRowProps) {
+const StepRow = memo(function StepRow({
+  step,
+  stepIds,
+  stepLabels,
+  isAfterDecision,
+  hasWarning,
+  onUpdate,
+  onDelete,
+}: StepRowProps) {
   return (
-    <tr className="group transition-colors hover:bg-slate-50/80">
+    <tr
+      className={`group transition-colors hover:bg-slate-50/80 ${
+        hasWarning ? 'border-l-4 border-amber-400 bg-amber-50/60' : ''
+      }`}
+    >
       <td className="px-3 py-2">
         <StepIdInput
           stepId={step.id}
@@ -108,6 +192,7 @@ const StepRow = memo(function StepRow({ step, stepIds, onUpdate, onDelete }: Ste
         <input
           aria-label={`Department for ${step.id}`}
           type="text"
+          list="department-options"
           value={step.department}
           onChange={(event) => onUpdate(step.id, 'department', event.target.value)}
           className={inputClass}
@@ -132,28 +217,49 @@ const StepRow = memo(function StepRow({ step, stepIds, onUpdate, onDelete }: Ste
           aria-label={`Predecessor for ${step.id}`}
           value={step.predecessorId}
           onChange={(event) => onUpdate(step.id, 'predecessorId', event.target.value)}
-          className={`${inputClass} font-mono text-xs`}
+          className={inputClass}
         >
           <option value="">None</option>
           {stepIds
             .filter((stepId) => stepId !== step.id)
             .map((stepId) => (
               <option key={stepId} value={stepId}>
-                {stepId}
+                {`${stepId} · ${stepLabels.get(stepId) ?? ''}`}
               </option>
             ))}
         </select>
       </td>
       <td className="px-3 py-2">
-        <input
-          aria-label={`Branch label for ${step.id}`}
-          type="text"
-          value={step.condition}
-          onChange={(event) => onUpdate(step.id, 'condition', event.target.value)}
-          placeholder="Yes / No"
-          title="Label on the arrow coming into this step, e.g. Yes or No"
-          className={`${inputClass} placeholder:text-slate-400`}
-        />
+        {isAfterDecision ? (
+          <select
+            aria-label={`Branch label for ${step.id}`}
+            value={step.condition}
+            onChange={(event) => onUpdate(step.id, 'condition', event.target.value)}
+            className={inputClass}
+          >
+            <option value="">—</option>
+            <option value="Yes">Yes</option>
+            <option value="No">No</option>
+          </select>
+        ) : step.condition ? (
+          <input
+            aria-label={`Branch label for ${step.id}`}
+            type="text"
+            value={step.condition}
+            onChange={(event) => onUpdate(step.id, 'condition', event.target.value)}
+            title="This label has no decision before it. Clear it."
+            className={inputClass}
+          />
+        ) : (
+          <input
+            aria-label={`Branch label for ${step.id}`}
+            type="text"
+            value=""
+            disabled
+            title="Branch labels only apply to the arrow leaving a Decision Point"
+            className={inputClass}
+          />
+        )}
       </td>
       <td className="px-3 py-2 text-center">
         <button
@@ -174,6 +280,27 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
   const [generated, setGenerated] = useState(false)
   const stepIdsKey = JSON.stringify(steps.map((step) => step.id))
   const stepIds = useMemo((): string[] => JSON.parse(stepIdsKey), [stepIdsKey])
+  const stepLabels = useMemo(
+    () => new Map(steps.map((s) => [s.id, s.stepName?.trim() || 'Untitled step'])),
+    [steps],
+  )
+  const decisionIds = useMemo(
+    () =>
+      new Set(
+        steps
+          .filter((s) => s.stepType === 'Decision Point' || s.stepType === 'Exclusive Gateway')
+          .map((s) => s.id),
+      ),
+    [steps],
+  )
+  const warnings = useMemo(() => computeWarnings(steps), [steps])
+  const departmentOptions = useMemo(
+    () =>
+      [...new Set(steps.map((step) => step.department.trim()).filter(Boolean))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [steps],
+  )
 
   const updateStep = useCallback(
     (stepId: string, field: StepField, value: string) => {
@@ -219,7 +346,7 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
         stepName: '',
         department: '',
         stepType: 'Task',
-        predecessorId: '',
+        predecessorId: currentSteps[currentSteps.length - 1]?.id ?? '',
         condition: '',
       },
     ])
@@ -268,6 +395,25 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
         </button>
       </div>
 
+      <datalist id="department-options" hidden>
+        {departmentOptions.map((department) => (
+          <option key={department} value={department} />
+        ))}
+      </datalist>
+
+      {warnings.length > 0 && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <h3 className="font-semibold">{warnings.length} items to check</h3>
+          <ul className="mt-1 list-inside list-disc">
+            {warnings.map((warning, index) => (
+              <li key={`${warning.stepId}-${index}`}>
+                {warning.stepId}: {warning.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
         <table className="w-full min-w-[1140px] table-fixed border-collapse text-left text-sm">
           <colgroup>
@@ -294,6 +440,9 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
                 key={step.id}
                 step={step}
                 stepIds={stepIds}
+                stepLabels={stepLabels}
+                isAfterDecision={decisionIds.has(step.predecessorId)}
+                hasWarning={warnings.some((warning) => warning.stepId === step.id)}
                 onUpdate={updateStep}
                 onDelete={deleteStep}
               />

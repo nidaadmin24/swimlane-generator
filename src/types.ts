@@ -32,9 +32,10 @@ export interface Step {
   sequenceFlows?: SequenceFlow[]
 }
 
-export interface ProcessDiagram extends Record<string, unknown> {
+export interface ProcessDiagram {
   id: string | number
   title: string
+  folder: string
   steps: Step[]
   user_id: string
   created_at: string
@@ -48,6 +49,7 @@ export type Database = {
         Insert: {
           id?: string | number
           title: string
+          folder?: string
           steps: Step[]
           user_id?: string
           created_at?: string
@@ -55,6 +57,7 @@ export type Database = {
         Update: {
           id?: string | number
           title?: string
+          folder?: string
           steps?: Step[]
           user_id?: string
           created_at?: string

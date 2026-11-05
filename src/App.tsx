@@ -26,6 +26,7 @@ import { validateBpmnProcess } from './validation/validateBpmnProcess'
 import './App.css'
 
 const initialTitle = 'Customer Onboarding Flow'
+const defaultFolder = 'General'
 const initialSteps: Step[] = [
   {
     id: 'STEP-001',
@@ -91,6 +92,7 @@ function App() {
   const skipNextAutoPreviewRef = useRef(false)
   const [previewSteps, setPreviewSteps] = useState<Step[]>(initialSteps)
   const [title, setTitle] = useState(initialTitle)
+  const [folder, setFolder] = useState(defaultFolder)
   const [previewTitle, setPreviewTitle] = useState(initialTitle)
   const [savedDiagrams, setSavedDiagrams] = useState<ProcessDiagram[]>([])
   const [currentId, setCurrentId] = useState<string | null>(null)
@@ -101,11 +103,15 @@ function App() {
   const [isFlowchartCleared, setIsFlowchartCleared] = useState(false)
   const [matrixKey, setMatrixKey] = useState(0)
   const [savedSnapshot, setSavedSnapshot] = useState<string>(
-    JSON.stringify({ title: initialTitle, steps: initialSteps }),
+    JSON.stringify({ title: initialTitle, folder: defaultFolder, steps: initialSteps }),
   )
   const hasUnsavedChanges =
-    JSON.stringify({ title, steps }) !== savedSnapshot
+    JSON.stringify({ title, folder, steps }) !== savedSnapshot
   const validationIssues = useMemo(() => validateBpmnProcess(steps), [steps])
+  const folderNames = useMemo(
+    () => [...new Set([defaultFolder, ...savedDiagrams.map((diagram) => diagram.folder)])].sort(),
+    [savedDiagrams],
+  )
 
   const updatePreview = useCallback((generatedSteps: Step[]) => {
     setPreviewSteps(generatedSteps)
@@ -149,7 +155,7 @@ function App() {
       })
       .catch((error) => {
         if (active) {
-            setAuthError(`Could not restore your session: ${getErrorMessage(error)}`)
+          setAuthError(`Could not restore your session: ${getErrorMessage(error)}`)
         }
       })
       .finally(() => {
@@ -240,7 +246,7 @@ function App() {
     try {
       const data = await saveProcessDiagram(
         supabase,
-        { title: processTitle, steps },
+        { title: processTitle, steps, folder: folder.trim() || defaultFolder },
         { id: currentId, asNew },
       )
 
@@ -248,11 +254,14 @@ function App() {
       const savedId = String(data.id)
       setCurrentId(savedId)
       setTitle(data.title)
+      setFolder(data.folder)
       setSteps(savedSteps)
       setPreviewTitle(data.title)
       setPreviewSteps(savedSteps)
       setIsFlowchartCleared(false)
-      setSavedSnapshot(JSON.stringify({ title: data.title, steps: savedSteps }))
+      setSavedSnapshot(
+        JSON.stringify({ title: data.title, folder: data.folder, steps: savedSteps }),
+      )
       setSavedDiagrams((currentDiagrams) => {
         const updatedDiagrams = [
           ...currentDiagrams.filter((diagram) => diagram.id !== data.id),
@@ -282,6 +291,7 @@ function App() {
   function resetWorkspace() {
     const newSteps = [createDefaultStep()]
     setTitle('')
+    setFolder(defaultFolder)
     skipNextAutoPreviewRef.current = true
     setSteps(newSteps)
     setPreviewSteps([])
@@ -290,7 +300,7 @@ function App() {
     setIsFlowchartCleared(true)
     setMatrixKey((currentKey) => currentKey + 1)
     setNotice(null)
-    setSavedSnapshot(JSON.stringify({ title: '', steps: newSteps }))
+    setSavedSnapshot(JSON.stringify({ title: '', folder: defaultFolder, steps: newSteps }))
   }
 
   function loadProcess(event: ChangeEvent<HTMLSelectElement>) {
@@ -305,11 +315,14 @@ function App() {
 
     setCurrentId(String(diagram.id))
     setTitle(diagram.title)
+    setFolder(diagram.folder)
     const loadedSteps = diagram.steps
     setSteps(loadedSteps)
     setPreviewSteps(loadedSteps)
     setPreviewTitle(diagram.title)
-    setSavedSnapshot(JSON.stringify({ title: diagram.title, steps: loadedSteps }))
+    setSavedSnapshot(
+      JSON.stringify({ title: diagram.title, folder: diagram.folder, steps: loadedSteps }),
+    )
     setIsFlowchartCleared(false)
     setNotice({ type: 'success', message: `Loaded "${diagram.title}".` })
   }
@@ -455,7 +468,7 @@ function App() {
           {authError}
         </p>
       )}
-      <div className="border-b border-slate-800 bg-slate-950 text-white">
+      <div className="print-hide border-b border-slate-800 bg-slate-950 text-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
           <div className="flex min-w-0 items-center gap-2.5">
             <Workflow aria-hidden="true" size={18} className="shrink-0 text-cyan-300" />
@@ -519,6 +532,22 @@ function App() {
                   className="mt-1.5 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
                 />
               </label>
+              <label className="block w-[180px] text-xs font-medium text-slate-600">
+                <span className="flex min-h-5 items-center">Folder</span>
+                <input
+                  type="text"
+                  list="folder-options"
+                  value={folder}
+                  onChange={(event) => setFolder(event.target.value)}
+                  placeholder={defaultFolder}
+                  className="mt-1.5 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                />
+                <datalist id="folder-options">
+                  {folderNames.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+              </label>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -579,11 +608,19 @@ function App() {
                           ? 'Load Flowchart'
                           : 'No saved flowcharts'}
                     </option>
-                    {savedDiagrams.map((diagram) => (
-                      <option key={diagram.id} value={String(diagram.id)}>
-                        {diagram.title}
-                      </option>
-                    ))}
+                    {folderNames.map((name) => {
+                      const items = savedDiagrams.filter((diagram) => diagram.folder === name)
+                      if (items.length === 0) return null
+                      return (
+                        <optgroup key={name} label={name}>
+                          {items.map((diagram) => (
+                            <option key={diagram.id} value={String(diagram.id)}>
+                              {diagram.title}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )
+                    })}
                   </select>
                 </div>
               </div>
