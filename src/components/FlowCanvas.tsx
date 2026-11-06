@@ -1,6 +1,6 @@
-import { memo, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { toPng } from 'html-to-image'
-import { Download, Maximize2, Minus, Plus, Printer, X } from 'lucide-react'
+import { Download, Expand, Maximize2, Minus, Plus, Printer, Shrink, X } from 'lucide-react'
 import type { Step } from '../types'
 
 const TASK_W = 176
@@ -564,6 +564,22 @@ function FlowCanvas({ steps, processTitle, folder, owner }: FlowCanvasProps) {
   const [zoom, setZoom] = useState(1)
   const [isExporting, setIsExporting] = useState(false)
   const [exportMessage, setExportMessage] = useState('')
+  const sectionRef = useRef<HTMLElement>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  useEffect(() => {
+    const handleChange = () => setIsFullscreen(document.fullscreenElement === sectionRef.current)
+    document.addEventListener('fullscreenchange', handleChange)
+    return () => document.removeEventListener('fullscreenchange', handleChange)
+  }, [])
+
+  async function toggleFullscreen() {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen()
+      return
+    }
+    await sectionRef.current?.requestFullscreen()
+  }
 
   const clampZoom = (value: number) =>
     Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(value * 10) / 10))
@@ -604,8 +620,9 @@ function FlowCanvas({ steps, processTitle, folder, owner }: FlowCanvasProps) {
 
   return (
     <section
-      className="print-flow overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm"
-      style={{ '--print-scale': printScale } as CSSProperties}
+      ref={sectionRef}
+      className={`print-flow overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm${isFullscreen ? ' flex flex-col' : ''}`}
+      style={{ ...({ '--print-scale': printScale } as CSSProperties), height: isFullscreen ? '100vh' : undefined }}
     >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-5">
         <div className="min-w-0">
@@ -656,6 +673,16 @@ function FlowCanvas({ steps, processTitle, folder, owner }: FlowCanvasProps) {
                 <Maximize2 aria-hidden="true" size={15} />
               </button>
             </div>
+            <button
+              type="button"
+              aria-label={isFullscreen ? 'Exit full screen' : 'Full screen'}
+              title={isFullscreen ? 'Exit full screen (Esc)' : 'Full screen'}
+              onClick={toggleFullscreen}
+              className="print-hide inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              {isFullscreen ? <Shrink aria-hidden="true" size={15} /> : <Expand aria-hidden="true" size={15} />}
+              {isFullscreen ? 'Exit full screen' : 'Full screen'}
+            </button>
             <button type="button" onClick={() => window.print()} className={buttonClass}>
               <Printer aria-hidden="true" size={15} />
               Print / Export PDF
@@ -685,11 +712,11 @@ function FlowCanvas({ steps, processTitle, folder, owner }: FlowCanvasProps) {
         </div>
       </header>
 
-      <div className="bg-slate-50 p-3 sm:p-5">
+      <div className={`bg-slate-50 p-3 sm:p-5 ${isFullscreen ? 'flex-1 min-h-0 flex flex-col' : ''}`}>
         {steps.length ? (
           <div
             className="print-scroll overflow-auto rounded border border-slate-300 bg-white"
-            style={{ maxHeight: 760 }}
+            style={isFullscreen ? { flex: 1, minHeight: 0, overflow: 'auto' } : { maxHeight: 760 }}
           >
             <div className="print-sizer" style={{ width: layout.width * zoom, height: layout.height * zoom }}>
               <div
@@ -698,8 +725,7 @@ function FlowCanvas({ steps, processTitle, folder, owner }: FlowCanvasProps) {
                 style={{
                   width: layout.width,
                   height: layout.height,
-                  transform: `scale(${zoom})`,
-                  transformOrigin: 'top left',
+                  zoom,
                 }}
               >
                 {layout.lanes.map((lane, index) => {
@@ -712,7 +738,13 @@ function FlowCanvas({ steps, processTitle, folder, owner }: FlowCanvasProps) {
                     >
                       <div
                         className="flex shrink-0 items-center border-r border-[#cbd5e1] px-4"
-                        style={{ width: LABEL_W, backgroundColor: tint.header }}
+                        style={{
+                          width: LABEL_W,
+                          backgroundColor: tint.header,
+                          position: 'sticky',
+                          left: 0,
+                          zIndex: 3,
+                        }}
                       >
                         <div className="min-w-0">
                           {lane.poolName && (

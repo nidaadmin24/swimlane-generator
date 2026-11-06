@@ -399,15 +399,10 @@ function App() {
           <div className="mb-8 flex size-12 items-center justify-center rounded-xl bg-slate-950 text-cyan-300 shadow-lg shadow-slate-900/15">
             <Workflow aria-hidden="true" size={23} />
           </div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
-            Process mapping
-          </p>
+          <p className="mb-3 text-lg font-semibold tracking-tight text-slate-900">NF Flowchart Studio</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-            Welcome back
+            Sign in
           </h1>
-          <p className="mt-2 text-sm leading-6 text-slate-500">
-            Sign in to open your swimlane workspace and continue building.
-          </p>
 
           <form className="mt-8 space-y-5" onSubmit={handleSignIn}>
             <label className="block text-sm font-medium text-slate-700">
@@ -480,7 +475,7 @@ function App() {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
           <div className="flex min-w-0 items-center gap-2.5">
             <Workflow aria-hidden="true" size={18} className="shrink-0 text-cyan-300" />
-            <span className="truncate text-sm font-semibold tracking-wide">Flowlane</span>
+            <span className="truncate text-base font-semibold tracking-wide">NF Flowchart Studio</span>
           </div>
           <div className="flex min-w-0 items-center gap-3">
             <span className="max-w-[145px] truncate text-xs text-slate-300 sm:max-w-[240px] sm:text-sm" title={user.email}>
@@ -500,14 +495,14 @@ function App() {
       </div>
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
             <div className="min-w-0">
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-sky-700">
-                Process mapping
-              </p>
               <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
-                Automated Swimlane Flowchart Generator
+                NF Flowchart Studio
               </h1>
+              <p className="mt-1 text-sm text-slate-500">
+                Automated swimlane flowchart generator
+              </p>
             </div>
             <div className="flex min-w-0 flex-wrap items-end gap-3">
               <label className="block min-w-[220px] flex-1 text-xs font-medium text-slate-600">
