@@ -10,6 +10,7 @@ import {
   LockKeyhole,
   LogOut,
   Mail,
+  Pin,
   Plus,
   Save,
   Trash2,
@@ -24,7 +25,7 @@ import {
   saveProcessDiagram,
 } from './services/processDiagrams'
 import type { Lane, ProcessDiagram, Step } from './types'
-import { deriveLanes } from './services/lanes'
+import { deriveLanes, setPinnedLane } from './services/lanes'
 import { validateBpmnProcess } from './validation/validateBpmnProcess'
 import './App.css'
 
@@ -776,13 +777,16 @@ function App() {
                 }}
                 className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-800 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
               />
+              {lane.pinned && (
+                <span className="text-xs font-medium text-sky-700">Pinned</span>
+              )}
               <button
                 type="button"
                 aria-label={`Move lane ${lane.name} up`}
                 disabled={index === 0}
                 onClick={() => {
                   setLanes((currentLanes) => {
-                    if (index === 0) return currentLanes
+                    if (index === 0 || currentLanes[index - 1]?.pinned) return currentLanes
                     const reordered = [...currentLanes]
                     ;[reordered[index - 1], reordered[index]] = [reordered[index], reordered[index - 1]]
                     return reordered
@@ -795,10 +799,12 @@ function App() {
               <button
                 type="button"
                 aria-label={`Move lane ${lane.name} down`}
-                disabled={index === lanes.length - 1}
+                disabled={index === lanes.length - 1 || Boolean(lane.pinned)}
                 onClick={() => {
                   setLanes((currentLanes) => {
-                    if (index >= currentLanes.length - 1) return currentLanes
+                    if (index >= currentLanes.length - 1 || currentLanes[index].pinned) {
+                      return currentLanes
+                    }
                     const reordered = [...currentLanes]
                     ;[reordered[index], reordered[index + 1]] = [reordered[index + 1], reordered[index]]
                     return reordered
@@ -807,6 +813,27 @@ function App() {
                 className="rounded-md border border-slate-300 p-2 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <ArrowDown aria-hidden="true" size={16} />
+              </button>
+              <button
+                type="button"
+                aria-label={lane.pinned ? 'Unpin lane' : 'Pin lane'}
+                title={lane.pinned ? 'Unpin lane' : 'Pin lane'}
+                onClick={() => {
+                  setLanes((currentLanes) => {
+                    const updatedLanes = setPinnedLane(currentLanes, lane.id)
+                    const pinnedLane = updatedLanes.find((currentLane) => currentLane.pinned)
+                    if (!pinnedLane) return updatedLanes
+                    return [
+                      pinnedLane,
+                      ...updatedLanes.filter((currentLane) => currentLane.id !== pinnedLane.id),
+                    ]
+                  })
+                }}
+                className={`inline-flex size-9 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 ${
+                  lane.pinned ? 'border-sky-500 bg-sky-50 text-sky-700' : ''
+                }`}
+              >
+                <Pin aria-hidden="true" size={16} />
               </button>
             </div>
           ))}

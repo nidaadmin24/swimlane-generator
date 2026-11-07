@@ -4,6 +4,14 @@ export function makeLaneId(): string {
   return `lane-${crypto.randomUUID().slice(0, 8)}`
 }
 
+export function setPinnedLane(lanes: Lane[], laneId: string): Lane[] {
+  const isAlreadyPinned = lanes.some((lane) => lane.id === laneId && lane.pinned)
+  return lanes.map((lane) => ({
+    ...lane,
+    pinned: !isAlreadyPinned && lane.id === laneId,
+  }))
+}
+
 export function deriveLanes(steps: Step[], existing: Lane[]): { lanes: Lane[]; steps: Step[] } {
   const lanesByName = new Map<string, Lane>()
   existing.forEach((lane) => {

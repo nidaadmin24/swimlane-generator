@@ -358,6 +358,8 @@ function layoutFlow(steps: Step[], savedLanes?: Lane[]): FlowLayout {
   const lanes = [...laneMap.values()]
   if (savedLanes) {
     lanes.sort((left, right) =>
+      Number(Boolean(savedLaneById.get(right.laneIdentity)?.pinned)) -
+        Number(Boolean(savedLaneById.get(left.laneIdentity)?.pinned)) ||
       (savedLaneOrder.get(left.laneIdentity) ?? Number.MAX_SAFE_INTEGER) -
         (savedLaneOrder.get(right.laneIdentity) ?? Number.MAX_SAFE_INTEGER))
   }

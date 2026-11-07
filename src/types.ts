@@ -21,6 +21,7 @@ export interface SequenceFlow {
 export interface Lane {
   id: string
   name: string
+  pinned?: boolean
 }
 
 export interface Step {
