@@ -18,6 +18,11 @@ export interface SequenceFlow {
   isDefault?: boolean
 }
 
+export interface Lane {
+  id: string
+  name: string
+}
+
 export interface Step {
   id: string
   stepName: string
@@ -37,6 +42,7 @@ export interface ProcessDiagram {
   title: string
   folder: string
   owner: string | null
+  lanes: Lane[]
   steps: Step[]
   user_id: string
   created_at: string
@@ -52,6 +58,7 @@ export type Database = {
           title: string
           folder?: string
           owner?: string | null
+          lanes?: Lane[]
           steps: Step[]
           user_id?: string
           created_at?: string
@@ -61,6 +68,7 @@ export type Database = {
           title?: string
           folder?: string
           owner?: string | null
+          lanes?: Lane[]
           steps?: Step[]
           user_id?: string
           created_at?: string

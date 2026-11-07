@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { toPng } from 'html-to-image'
 import { Download, Expand, Maximize2, Minus, Plus, Printer, Shrink, X } from 'lucide-react'
-import type { Step } from '../types'
+import type { Lane, Step } from '../types'
 
 const TASK_W = 176
 const TASK_MIN_H = 64
@@ -60,6 +60,7 @@ interface FlowLayout {
 interface RawEdge { id: string; sourceId: string; targetId: string; label: string }
 interface FlowCanvasProps {
   steps: Step[]
+  lanes?: Lane[]
   processTitle: string
   folder?: string
   owner?: string
@@ -326,27 +327,40 @@ function getRoundedOrthogonalPath(points: Point[], radius: number): string {
   const last = compact[compact.length - 1]
   return `${path} L ${last.x},${last.y}`
 }
-function layoutFlow(steps: Step[]): FlowLayout {
+function layoutFlow(steps: Step[], savedLanes?: Lane[]): FlowLayout {
   const stepsById = new Map<string, Step>(steps.map((step) => [step.id, step]))
   const kinds = new Map<string, NodeKind>(steps.map((step) => [step.id, getKind(step)]))
   const sizes = new Map<string, { w: number; h: number }>(
     steps.map((step) => [step.id, getShapeSize(step, kinds.get(step.id)!)]),
   )
+  const savedLaneById = new Map(savedLanes?.map((lane) => [lane.id, lane]))
+  const savedLaneOrder = new Map(savedLanes?.map((lane, index) => [lane.id, index]))
 
-  const laneMap = new Map<string, { key: string; label: string; poolName: string; stepIds: string[] }>()
+  const laneMap = new Map<string, {
+    key: string
+    label: string
+    poolName: string
+    laneIdentity: string
+    stepIds: string[]
+  }>()
   const laneKeyOf = new Map<string, string>()
   steps.forEach((step) => {
-    const label = getLaneLabel(step)
+    const label = savedLaneById.get(step.laneId ?? '')?.name ?? getLaneLabel(step)
     const poolName = step.poolName?.trim() || ''
     const laneIdentity = step.laneId?.trim() || label
     const poolIdentity = step.poolId?.trim() || poolName || 'default-pool'
     const key = `${poolIdentity}\u0000${laneIdentity}`
-    const lane = laneMap.get(key) ?? { key, label, poolName, stepIds: [] }
+    const lane = laneMap.get(key) ?? { key, label, poolName, laneIdentity, stepIds: [] }
     lane.stepIds.push(step.id)
     laneMap.set(key, lane)
     laneKeyOf.set(step.id, key)
   })
   const lanes = [...laneMap.values()]
+  if (savedLanes) {
+    lanes.sort((left, right) =>
+      (savedLaneOrder.get(left.laneIdentity) ?? Number.MAX_SAFE_INTEGER) -
+        (savedLaneOrder.get(right.laneIdentity) ?? Number.MAX_SAFE_INTEGER))
+  }
 
   const edges = collectEdges(steps, stepsById)
   const rank = computeRanks(steps.map((step) => step.id), edges)
@@ -556,8 +570,8 @@ function getPngFilename(processTitle: string): string {
   return `${filename || 'swimlane-flowchart'}.png`
 }
 
-function FlowCanvas({ steps, processTitle, folder, owner }: FlowCanvasProps) {
-  const layout = useMemo(() => layoutFlow(steps), [steps])
+function FlowCanvas({ steps, lanes, processTitle, folder, owner }: FlowCanvasProps) {
+  const layout = useMemo(() => layoutFlow(steps, lanes), [steps, lanes])
   // Scale for printing: fit the diagram on A3 landscape (about 1450 x 980 px printable area).
   const printScale = Math.min(1, 1450 / layout.width, 980 / layout.height)
   const canvasRef = useRef<HTMLDivElement>(null)

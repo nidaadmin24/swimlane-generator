@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import type { User } from '@supabase/supabase-js'
 import {
+  ArrowDown,
+  ArrowUp,
   ArrowRight,
   Check,
   Circle,
@@ -21,7 +23,8 @@ import {
   fetchProcessDiagrams,
   saveProcessDiagram,
 } from './services/processDiagrams'
-import type { ProcessDiagram, Step } from './types'
+import type { Lane, ProcessDiagram, Step } from './types'
+import { deriveLanes } from './services/lanes'
 import { validateBpmnProcess } from './validation/validateBpmnProcess'
 import './App.css'
 
@@ -81,6 +84,7 @@ function createDefaultStep(): Step {
 }
 
 function App() {
+  const [initialLaneState] = useState(() => deriveLanes(initialSteps, []))
   const [user, setUser] = useState<User | null>(null)
   const [isAuthLoading, setIsAuthLoading] = useState(isSupabaseConfigured)
   const [email, setEmail] = useState('')
@@ -88,9 +92,11 @@ function App() {
   const [authError, setAuthError] = useState('')
   const [isSigningIn, setIsSigningIn] = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
-  const [steps, setSteps] = useState<Step[]>(initialSteps)
+  const [steps, setSteps] = useState<Step[]>(initialLaneState.steps)
+  const [lanes, setLanes] = useState<Lane[]>(initialLaneState.lanes)
+  const skipNextLaneDerivationRef = useRef(false)
   const skipNextAutoPreviewRef = useRef(false)
-  const [previewSteps, setPreviewSteps] = useState<Step[]>(initialSteps)
+  const [previewSteps, setPreviewSteps] = useState<Step[]>(initialLaneState.steps)
   const [title, setTitle] = useState(initialTitle)
   const [folder, setFolder] = useState(defaultFolder)
   const [owner, setOwner] = useState('')
@@ -104,10 +110,16 @@ function App() {
   const [isFlowchartCleared, setIsFlowchartCleared] = useState(false)
   const [matrixKey, setMatrixKey] = useState(0)
   const [savedSnapshot, setSavedSnapshot] = useState<string>(
-    JSON.stringify({ title: initialTitle, folder: defaultFolder, owner: '', steps: initialSteps }),
+    JSON.stringify({
+      title: initialTitle,
+      folder: defaultFolder,
+      owner: '',
+      lanes: initialLaneState.lanes,
+      steps: initialLaneState.steps,
+    }),
   )
   const hasUnsavedChanges =
-    JSON.stringify({ title, folder, owner, steps }) !== savedSnapshot
+    JSON.stringify({ title, folder, owner, lanes, steps }) !== savedSnapshot
   const validationIssues = useMemo(() => validateBpmnProcess(steps), [steps])
   const folderNames = useMemo(
     () => [...new Set([defaultFolder, ...savedDiagrams.map((diagram) => diagram.folder)])].sort(),
@@ -132,6 +144,25 @@ function App() {
 
     updatePreview(steps.map((step) => ({ ...step })))
   }, [steps, updatePreview])
+
+  useEffect(() => {
+    if (skipNextLaneDerivationRef.current) {
+      skipNextLaneDerivationRef.current = false
+      return
+    }
+
+    const derived = deriveLanes(steps, lanes)
+    if (derived.steps.some((step, index) => step.laneId !== steps[index]?.laneId)) {
+      setSteps(derived.steps)
+    }
+    if (
+      derived.lanes.length !== lanes.length ||
+      derived.lanes.some((lane, index) =>
+        lane.id !== lanes[index]?.id || lane.name !== lanes[index]?.name)
+    ) {
+      setLanes(derived.lanes)
+    }
+  }, [steps, lanes])
 
   useEffect(() => {
     if (!supabase) return undefined
@@ -249,24 +280,39 @@ function App() {
     setNotice(null)
 
     try {
+      const derived = deriveLanes(steps, lanes)
       const data = await saveProcessDiagram(
         supabase,
-        { title: processTitle, steps, folder: folder.trim() || defaultFolder, owner: owner.trim() || null },
+        {
+          title: processTitle,
+          steps: derived.steps,
+          folder: folder.trim() || defaultFolder,
+          owner: owner.trim() || null,
+          lanes: derived.lanes,
+        },
         { id: currentId, asNew },
       )
 
       const savedSteps = data.steps
+      const savedLanes = data.lanes ?? derived.lanes
       const savedId = String(data.id)
       setCurrentId(savedId)
       setTitle(data.title)
       setFolder(data.folder)
       setOwner(data.owner ?? '')
       setSteps(savedSteps)
+      setLanes(savedLanes)
       setPreviewTitle(data.title)
       setPreviewSteps(savedSteps)
       setIsFlowchartCleared(false)
       setSavedSnapshot(
-        JSON.stringify({ title: data.title, folder: data.folder, owner: data.owner ?? '', steps: savedSteps }),
+        JSON.stringify({
+          title: data.title,
+          folder: data.folder,
+          owner: data.owner ?? '',
+          lanes: savedLanes,
+          steps: savedSteps,
+        }),
       )
       setSavedDiagrams((currentDiagrams) => {
         const updatedDiagrams = [
@@ -295,11 +341,14 @@ function App() {
   }
 
   function resetWorkspace() {
-    const newSteps = [createDefaultStep()]
+    const derived = deriveLanes([createDefaultStep()], [])
+    const newSteps = derived.steps
     setTitle('')
     setFolder(defaultFolder)
     setOwner('')
     skipNextAutoPreviewRef.current = true
+    skipNextLaneDerivationRef.current = true
+    setLanes(derived.lanes)
     setSteps(newSteps)
     setPreviewSteps([])
     setPreviewTitle('')
@@ -307,7 +356,13 @@ function App() {
     setIsFlowchartCleared(true)
     setMatrixKey((currentKey) => currentKey + 1)
     setNotice(null)
-    setSavedSnapshot(JSON.stringify({ title: '', folder: defaultFolder, owner: '', steps: newSteps }))
+    setSavedSnapshot(JSON.stringify({
+      title: '',
+      folder: defaultFolder,
+      owner: '',
+      lanes: derived.lanes,
+      steps: newSteps,
+    }))
   }
 
   function loadProcess(event: ChangeEvent<HTMLSelectElement>) {
@@ -324,12 +379,22 @@ function App() {
     setTitle(diagram.title)
     setFolder(diagram.folder)
     setOwner(diagram.owner ?? '')
-    const loadedSteps = diagram.steps
+    const existingLanes = diagram.lanes ?? []
+    const derived = deriveLanes(diagram.steps, existingLanes)
+    const loadedSteps = derived.steps
+    skipNextLaneDerivationRef.current = true
+    setLanes(derived.lanes)
     setSteps(loadedSteps)
     setPreviewSteps(loadedSteps)
     setPreviewTitle(diagram.title)
     setSavedSnapshot(
-      JSON.stringify({ title: diagram.title, folder: diagram.folder, owner: diagram.owner ?? '', steps: loadedSteps }),
+      JSON.stringify({
+        title: diagram.title,
+        folder: diagram.folder,
+        owner: diagram.owner ?? '',
+        lanes: derived.lanes,
+        steps: loadedSteps,
+      }),
     )
     setIsFlowchartCleared(false)
     setNotice({ type: 'success', message: `Loaded "${diagram.title}".` })
@@ -686,6 +751,67 @@ function App() {
           )}
         </div>
       </header>
+      <section
+        className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8"
+        aria-label="Flowchart lanes"
+      >
+        <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-4">
+          <h2 className="text-sm font-semibold text-slate-800">Lanes</h2>
+          {lanes.map((lane, index) => (
+            <div key={lane.id} className="flex items-center gap-2">
+              <input
+                type="text"
+                aria-label={`Lane name ${index + 1}`}
+                value={lane.name}
+                onChange={(event) => {
+                  const name = event.target.value
+                  setLanes((currentLanes) =>
+                    currentLanes.map((currentLane) =>
+                      currentLane.id === lane.id ? { ...currentLane, name } : currentLane),
+                  )
+                  setSteps((currentSteps) =>
+                    currentSteps.map((step) =>
+                      step.laneId === lane.id ? { ...step, department: name } : step),
+                  )
+                }}
+                className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-800 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+              />
+              <button
+                type="button"
+                aria-label={`Move lane ${lane.name} up`}
+                disabled={index === 0}
+                onClick={() => {
+                  setLanes((currentLanes) => {
+                    if (index === 0) return currentLanes
+                    const reordered = [...currentLanes]
+                    ;[reordered[index - 1], reordered[index]] = [reordered[index], reordered[index - 1]]
+                    return reordered
+                  })
+                }}
+                className="rounded-md border border-slate-300 p-2 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <ArrowUp aria-hidden="true" size={16} />
+              </button>
+              <button
+                type="button"
+                aria-label={`Move lane ${lane.name} down`}
+                disabled={index === lanes.length - 1}
+                onClick={() => {
+                  setLanes((currentLanes) => {
+                    if (index >= currentLanes.length - 1) return currentLanes
+                    const reordered = [...currentLanes]
+                    ;[reordered[index], reordered[index + 1]] = [reordered[index + 1], reordered[index]]
+                    return reordered
+                  })
+                }}
+                className="rounded-md border border-slate-300 p-2 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <ArrowDown aria-hidden="true" size={16} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
       <main className="mx-auto max-w-7xl space-y-8 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
         <StepMatrix
           key={matrixKey}
@@ -695,6 +821,7 @@ function App() {
         />
         <FlowCanvas
           steps={isFlowchartCleared ? [] : previewSteps}
+          lanes={lanes}
           processTitle={previewTitle}
           folder={folder}
           owner={owner}

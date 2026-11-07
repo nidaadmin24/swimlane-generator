@@ -455,9 +455,25 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
   )
 
   const exportCsv = useCallback(() => {
-    const header = ['Step ID', 'Step name', 'Department', 'Step type', 'Predecessor', 'Branch label']
+    const header = [
+      'Step ID',
+      'Step name',
+      'Department',
+      'Step type',
+      'Predecessor',
+      'Branch label',
+      'Lane ID',
+    ]
     const rows = steps.map((step) =>
-      [step.id, step.stepName, step.department, step.stepType, step.predecessorId, step.condition]
+      [
+        step.id,
+        step.stepName,
+        step.department,
+        step.stepType,
+        step.predecessorId,
+        step.condition,
+        step.laneId ?? '',
+      ]
         .map(toCsvCell)
         .join(','),
     )

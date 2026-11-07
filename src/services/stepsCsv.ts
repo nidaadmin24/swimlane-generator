@@ -7,7 +7,10 @@ export const STEP_CSV_HEADERS = [
   'Step type',
   'Predecessor',
   'Branch label',
+  'Lane ID',
 ]
+
+const requiredStepCsvHeaders = STEP_CSV_HEADERS.filter((header) => header !== 'Lane ID')
 
 export interface StepCsvResult {
   steps: Step[]
@@ -82,13 +85,13 @@ export function parseStepsCsv(text: string): StepCsvResult {
   )
   const headerRow = rows[0]
   if (!headerRow) {
-    return { steps: [], errors: [`Missing required header: ${STEP_CSV_HEADERS.join(', ')}`] }
+    return { steps: [], errors: [`Missing required header: ${requiredStepCsvHeaders.join(', ')}`] }
   }
 
   const headerIndexes = new Map<string, number>(
     headerRow.cells.map((header, index) => [header.trim().toLocaleLowerCase(), index]),
   )
-  const missingHeaders = STEP_CSV_HEADERS.filter(
+  const missingHeaders = requiredStepCsvHeaders.filter(
     (header) => !headerIndexes.has(header.toLocaleLowerCase()),
   )
   if (missingHeaders.length) {
@@ -119,6 +122,7 @@ export function parseStepsCsv(text: string): StepCsvResult {
     const rawPredecessor = cellFor(row.cells, 'Predecessor')
     const predecessorId = rawPredecessor.toLocaleLowerCase() === 'none' ? '' : rawPredecessor
     const condition = cellFor(row.cells, 'Branch label')
+    const laneId = headerIndexes.has('lane id') ? cellFor(row.cells, 'Lane ID') : ''
     const rowErrors: string[] = []
 
     if (!id) {
@@ -151,6 +155,7 @@ export function parseStepsCsv(text: string): StepCsvResult {
       stepType: stepType as StepType,
       predecessorId,
       condition,
+      ...(laneId ? { laneId } : {}),
     })
   }
 

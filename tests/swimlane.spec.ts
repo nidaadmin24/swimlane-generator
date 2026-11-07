@@ -83,6 +83,9 @@ async function mockSupabase(page: Page, options: { loadError?: boolean } = {}) {
       const diagram: ProcessDiagram = {
         id: `diagram-${nextId++}`,
         title: body.title,
+        folder: 'General',
+        owner: null,
+        lanes: [],
         steps: body.steps,
         user_id: testUser.id,
         created_at: new Date().toISOString(),
@@ -289,7 +292,7 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
       ),
     ).toBeLessThan(1)
   }
-  expect(yesLabelBox!.y).toBeGreaterThan(yesHandleBox!.y + yesHandleBox!.height)
+  expect(yesLabelBox!.y + yesLabelBox!.height).toBeLessThan(yesHandleBox!.y)
   expect(noLabelBox!.x).toBeGreaterThan(noHandleBox!.x + noHandleBox!.width)
   for (const edge of [yesEdge, noEdge]) {
     await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('fill', 'rgb(31, 41, 55)')
@@ -317,6 +320,9 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
     expect(positions[index].x).toBeGreaterThan(positions[index - 1].x)
   }
 
+  await page
+    .getByLabel('Step name for STEP-008')
+    .fill('Request Pending Documents Follow Up Across Multiple Review Stages')
   await page.getByLabel('Department for STEP-007').fill('Operations')
   await page.getByLabel('Predecessor for STEP-004').selectOption('STEP-007')
   const loopbackEdge = page.locator('.react-flow__edge[data-id="edge-STEP-007-STEP-004"]')
@@ -341,9 +347,39 @@ test('keeps parallel decision outcomes in numerical step order', async ({ page }
       .matrixTransform(matrix)
     return { x: end.x, y: end.y, previousY: beforeEnd.y }
   })
+  const intersectedNodes = await loopbackEdge.locator('.react-flow__edge-path').evaluate((path) => {
+    const svgPath = path as SVGPathElement
+    const matrix = svgPath.getScreenCTM()
+    if (!matrix) return null
+
+    const otherNodes = Array.from(
+      document.querySelectorAll<HTMLElement>('.react-flow__node[data-id^="STEP-"]'),
+    ).filter((node) => !['STEP-007', 'STEP-004'].includes(node.dataset.id ?? ''))
+    const bounds = otherNodes.map((node) => {
+      const { left, right, top, bottom } = node.getBoundingClientRect()
+      return { id: node.dataset.id, left, right, top, bottom }
+    })
+    const intersections = new Set<string>()
+    const length = svgPath.getTotalLength()
+    for (let distance = 1; distance < length; distance += 2) {
+      const point = svgPath.getPointAtLength(distance).matrixTransform(matrix)
+      bounds.forEach((box) => {
+        if (
+          point.x > box.left &&
+          point.x < box.right &&
+          point.y > box.top &&
+          point.y < box.bottom
+        ) {
+          intersections.add(box.id ?? '')
+        }
+      })
+    }
+    return [...intersections]
+  })
 
   expect(targetHandleBox).not.toBeNull()
   expect(loopbackEndpoint).not.toBeNull()
+  expect(intersectedNodes).toEqual([])
   expect(
     Math.hypot(
       loopbackEndpoint!.x - (targetHandleBox!.x + targetHandleBox!.width / 2),
