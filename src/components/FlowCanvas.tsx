@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from '
 import { toPng } from 'html-to-image'
 import { Download, Expand, Maximize2, Minus, Plus, Printer, Shrink, X } from 'lucide-react'
 import type { Lane, Step } from '../types'
+import { toFlowModel, type Link } from '../services/flowModel'
 
 const TASK_W = 176
 const TASK_MIN_H = 64
@@ -124,49 +125,19 @@ function getNodeTitle(step: Step, kind: NodeKind): string {
   return step.stepName?.trim() || fallback
 }
 
-function normalizeBranchLabel(label: string): string {
-  if (/^yes$/i.test(label)) return 'Yes'
-  if (/^no$/i.test(label)) return 'No'
-  return label
-}
-
 function getBranchLabelColor(label: string): string {
   if (label === 'Yes') return '#047857'
   if (label === 'No') return '#be123c'
   return '#334155'
 }
 
-function collectEdges(steps: Step[], stepsById: Map<string, Step>): RawEdge[] {
-  const edges = new Map<string, RawEdge>()
-  const keyOf = (source: string, target: string) => `${source}\u0000${target}`
-
-  steps.forEach((step) => {
-    for (const flow of step.sequenceFlows ?? []) {
-      if (flow.targetId === step.id || !stepsById.has(flow.targetId)) continue
-      const label = flow.label?.trim() || flow.conditionExpression?.trim() || ''
-      edges.set(keyOf(step.id, flow.targetId), {
-        id: flow.id || `edge-${step.id}-${flow.targetId}`,
-        sourceId: step.id,
-        targetId: flow.targetId,
-        label: normalizeBranchLabel(label),
-      })
-    }
-  })
-
-  steps.forEach((step) => {
-    const predecessor = stepsById.get(step.predecessorId)
-    if (!predecessor || predecessor.id === step.id) return
-    const key = keyOf(predecessor.id, step.id)
-    if (edges.has(key)) return
-    edges.set(key, {
-      id: `edge-${predecessor.id}-${step.id}`,
-      sourceId: predecessor.id,
-      targetId: step.id,
-      label: normalizeBranchLabel(step.condition?.trim() ?? ''),
-    })
-  })
-
-  return [...edges.values()]
+function collectEdges(links: Link[]): RawEdge[] {
+  return links.map((link) => ({
+    id: link.id,
+    sourceId: link.from,
+    targetId: link.to,
+    label: link.label ?? '',
+  }))
 }
 
 function computeRanks(ids: string[], edges: RawEdge[]): Map<string, number> {
@@ -327,8 +298,7 @@ function getRoundedOrthogonalPath(points: Point[], radius: number): string {
   const last = compact[compact.length - 1]
   return `${path} L ${last.x},${last.y}`
 }
-function layoutFlow(steps: Step[], savedLanes?: Lane[]): FlowLayout {
-  const stepsById = new Map<string, Step>(steps.map((step) => [step.id, step]))
+function layoutFlow(steps: Step[], savedLanes?: Lane[], links: Link[] = []): FlowLayout {
   const kinds = new Map<string, NodeKind>(steps.map((step) => [step.id, getKind(step)]))
   const sizes = new Map<string, { w: number; h: number }>(
     steps.map((step) => [step.id, getShapeSize(step, kinds.get(step.id)!)]),
@@ -364,7 +334,7 @@ function layoutFlow(steps: Step[], savedLanes?: Lane[]): FlowLayout {
         (savedLaneOrder.get(right.laneIdentity) ?? Number.MAX_SAFE_INTEGER))
   }
 
-  const edges = collectEdges(steps, stepsById)
+  const edges = collectEdges(links)
   const rank = computeRanks(steps.map((step) => step.id), edges)
 
   const centerX = new Map<string, number>(
@@ -573,7 +543,15 @@ function getPngFilename(processTitle: string): string {
 }
 
 function FlowCanvas({ steps, lanes, processTitle, folder, owner }: FlowCanvasProps) {
-  const layout = useMemo(() => layoutFlow(steps, lanes), [steps, lanes])
+  const { model, warnings } = useMemo(
+    () => toFlowModel({ steps, lanes }),
+    [steps, lanes],
+  )
+  if (warnings.length > 0) console.warn('Flow model warnings:', warnings)
+  const layout = useMemo(
+    () => layoutFlow(steps, lanes, model.links),
+    [steps, lanes, model.links],
+  )
   // Scale for printing: fit the diagram on A3 landscape (about 1450 x 980 px printable area).
   const printScale = Math.min(1, 1450 / layout.width, 980 / layout.height)
   const canvasRef = useRef<HTMLDivElement>(null)
