@@ -4,6 +4,37 @@ export type Link = { id: string; from: string; to: string; label?: string }
 
 export type FlowModel = { schemaVersion: 2; steps: Step[]; links: Link[] }
 
+export function fromFlowModel(model: FlowModel): { steps: Step[] } {
+  const steps = model.steps.map((step) => {
+    const copy = { ...step, predecessorId: '', condition: '' }
+    delete copy.sequenceFlows
+    return copy
+  })
+  const stepsById = new Map(steps.map((step) => [step.id, step]))
+  const incomingAssigned = new Set<string>()
+
+  for (const link of model.links) {
+    const target = stepsById.get(link.to)
+    if (!target) continue
+
+    if (!incomingAssigned.has(link.to)) {
+      target.predecessorId = link.from
+      target.condition = link.label ?? ''
+      incomingAssigned.add(link.to)
+      continue
+    }
+
+    const source = stepsById.get(link.from)
+    if (!source) continue
+    source.sequenceFlows = [
+      ...(source.sequenceFlows ?? []),
+      { id: link.id, targetId: link.to, label: link.label },
+    ]
+  }
+
+  return { steps }
+}
+
 export function toFlowModel(record: {
   steps: Step[]
   lanes?: Lane[]

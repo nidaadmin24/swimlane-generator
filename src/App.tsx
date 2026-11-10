@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import type { User } from '@supabase/supabase-js'
 import {
   ArrowDown,
@@ -24,6 +24,7 @@ import {
   fetchProcessDiagrams,
   saveProcessDiagram,
 } from './services/processDiagrams'
+import { fromFlowModel, toFlowModel, type FlowModel, type Link } from './services/flowModel'
 import type { Lane, ProcessDiagram, Step } from './types'
 import { deriveLanes, setPinnedLane } from './services/lanes'
 import { validateBpmnProcess } from './validation/validateBpmnProcess'
@@ -86,6 +87,7 @@ function createDefaultStep(): Step {
 
 function App() {
   const [initialLaneState] = useState(() => deriveLanes(initialSteps, []))
+  const [initialModel] = useState(() => toFlowModel(initialLaneState).model)
   const [user, setUser] = useState<User | null>(null)
   const [isAuthLoading, setIsAuthLoading] = useState(isSupabaseConfigured)
   const [email, setEmail] = useState('')
@@ -93,11 +95,31 @@ function App() {
   const [authError, setAuthError] = useState('')
   const [isSigningIn, setIsSigningIn] = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
-  const [steps, setSteps] = useState<Step[]>(initialLaneState.steps)
+  const [model, setModel] = useState<FlowModel>(initialModel)
+  const steps = model.steps
+  const links = model.links
+  const setSteps = useCallback<Dispatch<SetStateAction<Step[]>>>((action) => {
+    setModel((current) => ({
+      ...current,
+      steps: typeof action === 'function' ? action(current.steps) : action,
+    }))
+  }, [])
+  const setLinks = useCallback<Dispatch<SetStateAction<Link[]>>>((action) => {
+    setModel((current) => {
+      const nextLinks = typeof action === 'function' ? action(current.links) : action
+      return {
+        ...current,
+        ...fromFlowModel({ ...current, links: nextLinks }),
+        links: nextLinks,
+      }
+    })
+  }, [])
   const [lanes, setLanes] = useState<Lane[]>(initialLaneState.lanes)
   const skipNextLaneDerivationRef = useRef(false)
   const skipNextAutoPreviewRef = useRef(false)
-  const [previewSteps, setPreviewSteps] = useState<Step[]>(initialLaneState.steps)
+  const [previewSteps, setPreviewSteps] = useState<Step[]>(
+    () => fromFlowModel(initialModel).steps,
+  )
   const [title, setTitle] = useState(initialTitle)
   const [folder, setFolder] = useState(defaultFolder)
   const [owner, setOwner] = useState('')
@@ -117,10 +139,11 @@ function App() {
       owner: '',
       lanes: initialLaneState.lanes,
       steps: initialLaneState.steps,
+      links: initialModel.links,
     }),
   )
   const hasUnsavedChanges =
-    JSON.stringify({ title, folder, owner, lanes, steps }) !== savedSnapshot
+    JSON.stringify({ title, folder, owner, lanes, steps, links }) !== savedSnapshot
   const validationIssues = useMemo(() => validateBpmnProcess(steps), [steps])
   const folderNames = useMemo(
     () => [...new Set([defaultFolder, ...savedDiagrams.map((diagram) => diagram.folder)])].sort(),
@@ -143,8 +166,8 @@ function App() {
       return
     }
 
-    updatePreview(steps.map((step) => ({ ...step })))
-  }, [steps, updatePreview])
+    updatePreview(fromFlowModel(model).steps)
+  }, [model, updatePreview])
 
   useEffect(() => {
     if (skipNextLaneDerivationRef.current) {
@@ -154,7 +177,9 @@ function App() {
 
     const derived = deriveLanes(steps, lanes)
     if (derived.steps.some((step, index) => step.laneId !== steps[index]?.laneId)) {
-      setSteps(derived.steps)
+      // Keep derived lane IDs synchronized with the edited steps.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setModel((current) => ({ ...current, steps: derived.steps }))
     }
     if (
       derived.lanes.length !== lanes.length ||
@@ -163,7 +188,7 @@ function App() {
     ) {
       setLanes(derived.lanes)
     }
-  }, [steps, lanes])
+  }, [steps, lanes, setModel])
 
   useEffect(() => {
     if (!supabase) return undefined
@@ -282,11 +307,15 @@ function App() {
 
     try {
       const derived = deriveLanes(steps, lanes)
+      const savedStepsForDatabase = fromFlowModel({
+        ...model,
+        steps: derived.steps,
+      }).steps
       const data = await saveProcessDiagram(
         supabase,
         {
           title: processTitle,
-          steps: derived.steps,
+          steps: savedStepsForDatabase,
           folder: folder.trim() || defaultFolder,
           owner: owner.trim() || null,
           lanes: derived.lanes,
@@ -296,15 +325,16 @@ function App() {
 
       const savedSteps = data.steps
       const savedLanes = data.lanes ?? derived.lanes
+      const savedModel = toFlowModel({ steps: savedSteps, lanes: savedLanes }).model
       const savedId = String(data.id)
       setCurrentId(savedId)
       setTitle(data.title)
       setFolder(data.folder)
       setOwner(data.owner ?? '')
-      setSteps(savedSteps)
+      setModel(savedModel)
       setLanes(savedLanes)
       setPreviewTitle(data.title)
-      setPreviewSteps(savedSteps)
+      setPreviewSteps(fromFlowModel(savedModel).steps)
       setIsFlowchartCleared(false)
       setSavedSnapshot(
         JSON.stringify({
@@ -312,7 +342,8 @@ function App() {
           folder: data.folder,
           owner: data.owner ?? '',
           lanes: savedLanes,
-          steps: savedSteps,
+          steps: savedModel.steps,
+          links: savedModel.links,
         }),
       )
       setSavedDiagrams((currentDiagrams) => {
@@ -344,13 +375,14 @@ function App() {
   function resetWorkspace() {
     const derived = deriveLanes([createDefaultStep()], [])
     const newSteps = derived.steps
+    const newModel = toFlowModel({ steps: newSteps, lanes: derived.lanes }).model
     setTitle('')
     setFolder(defaultFolder)
     setOwner('')
     skipNextAutoPreviewRef.current = true
     skipNextLaneDerivationRef.current = true
     setLanes(derived.lanes)
-    setSteps(newSteps)
+    setModel(newModel)
     setPreviewSteps([])
     setPreviewTitle('')
     setCurrentId(null)
@@ -363,6 +395,7 @@ function App() {
       owner: '',
       lanes: derived.lanes,
       steps: newSteps,
+      links: newModel.links,
     }))
   }
 
@@ -382,11 +415,12 @@ function App() {
     setOwner(diagram.owner ?? '')
     const existingLanes = diagram.lanes ?? []
     const derived = deriveLanes(diagram.steps, existingLanes)
-    const loadedSteps = derived.steps
+    const loadedModel = toFlowModel({ steps: derived.steps, lanes: derived.lanes }).model
+    const loadedSteps = loadedModel.steps
     skipNextLaneDerivationRef.current = true
     setLanes(derived.lanes)
-    setSteps(loadedSteps)
-    setPreviewSteps(loadedSteps)
+    setModel(loadedModel)
+    setPreviewSteps(fromFlowModel(loadedModel).steps)
     setPreviewTitle(diagram.title)
     setSavedSnapshot(
       JSON.stringify({
@@ -395,6 +429,7 @@ function App() {
         owner: diagram.owner ?? '',
         lanes: derived.lanes,
         steps: loadedSteps,
+        links: loadedModel.links,
       }),
     )
     setIsFlowchartCleared(false)
@@ -839,11 +874,13 @@ function App() {
           ))}
         </div>
       </section>
-      <main className="mx-auto max-w-7xl space-y-8 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+      <main className="mx-auto max-w-[1680px] space-y-8 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
         <StepMatrix
           key={matrixKey}
           steps={steps}
+          links={links}
           onStepsChange={setSteps}
+          onLinksChange={setLinks}
           onGenerate={updatePreview}
         />
         <FlowCanvas

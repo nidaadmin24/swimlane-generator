@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
 import type { Lane, Step } from '../src/types'
-import { toFlowModel } from '../src/services/flowModel'
+import { fromFlowModel, toFlowModel } from '../src/services/flowModel'
 
 type FlowchartFixture = {
   title: string
@@ -47,6 +47,23 @@ test('converts backup flowcharts without changing their input', () => {
     )
     expect(second).toEqual(first)
     expect(JSON.stringify(flowchart)).toBe(original)
+
+    const roundTripped = toFlowModel({
+      steps: fromFlowModel(first.model).steps,
+      lanes: flowchart.lanes,
+    })
+    const sortedLinks = (links: typeof first.model.links) =>
+      links
+        .map(({ from, to, label }) => ({ from, to, label }))
+        .sort((left, right) =>
+          left.from.localeCompare(right.from) ||
+          left.to.localeCompare(right.to) ||
+          (left.label ?? '').localeCompare(right.label ?? ''),
+        )
+    expect(roundTripped.model.links.length, `Round-trip link count for "${title}"`)
+      .toBe(expectedLinkCount)
+    expect(sortedLinks(roundTripped.model.links)).toEqual(sortedLinks(first.model.links))
+    expect(roundTripped.warnings, `Round-trip warnings for "${title}"`).toHaveLength(0)
   }
 
   const audit = flowcharts.find(

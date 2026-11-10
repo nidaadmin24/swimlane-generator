@@ -9,7 +9,9 @@ import {
   type SetStateAction,
 } from 'react'
 import { ArrowDown, ArrowUp, Download, Plus, Trash2, Upload, Workflow } from 'lucide-react'
+import { fromFlowModel, toFlowModel } from '../services/flowModel'
 import { parseStepsCsv } from '../services/stepsCsv'
+import type { Link } from '../services/flowModel'
 import type { Step, StepType } from '../types'
 
 const stepTypes = [
@@ -34,22 +36,19 @@ function toCsvCell(value: string): string {
   return /[",\n\r]/.test(escaped) ? `"${escaped}"` : escaped
 }
 
-function computeWarnings(steps: Step[]): StepWarning[] {
+function computeWarnings(steps: Step[], links: Link[]): StepWarning[] {
   const stepById = new Map(steps.map((step) => [step.id, step]))
-  const successorCounts = new Map<string, number>()
-  const otherSuccessorCounts = new Map<string, number>()
+  const incomingCounts = new Map<string, number>()
+  const outgoingCounts = new Map<string, number>()
   const departmentCounts = new Map<string, number>()
 
-  for (const step of steps) {
-    if (step.predecessorId) {
-      successorCounts.set(step.predecessorId, (successorCounts.get(step.predecessorId) ?? 0) + 1)
-      if (step.predecessorId !== step.id) {
-        otherSuccessorCounts.set(
-          step.predecessorId,
-          (otherSuccessorCounts.get(step.predecessorId) ?? 0) + 1,
-        )
-      }
+  for (const link of links) {
+    incomingCounts.set(link.to, (incomingCounts.get(link.to) ?? 0) + 1)
+    if (link.from !== link.to) {
+      outgoingCounts.set(link.from, (outgoingCounts.get(link.from) ?? 0) + 1)
     }
+  }
+  for (const step of steps) {
     const department = step.department.trim().toLocaleLowerCase()
     if (department) {
       departmentCounts.set(department, (departmentCounts.get(department) ?? 0) + 1)
@@ -60,30 +59,32 @@ function computeWarnings(steps: Step[]): StepWarning[] {
   for (const step of steps) {
     const isDecision =
       step.stepType === 'Decision Point' || step.stepType === 'Exclusive Gateway'
-    const predecessor = stepById.get(step.predecessorId)
-    const predecessorIsDecision =
-      predecessor?.stepType === 'Decision Point' || predecessor?.stepType === 'Exclusive Gateway'
 
-    if (isDecision && (successorCounts.get(step.id) ?? 0) < 2) {
+    if (isDecision && (outgoingCounts.get(step.id) ?? 0) < 2) {
       warnings.push({
         stepId: step.id,
         message: 'Decision needs two outgoing branches (Yes and No).',
       })
     }
-    if (/^(yes|no)$/i.test(step.condition.trim()) && !predecessorIsDecision) {
+    if (
+      links.some((link) => link.to === step.id && /^(yes|no)$/i.test(link.label ?? '') &&
+        !['Decision Point', 'Exclusive Gateway'].includes(
+          stepById.get(link.from)?.stepType ?? '',
+        ))
+    ) {
       warnings.push({
         stepId: step.id,
         message: 'Yes/No label is only used after a decision.',
       })
     }
-    if (step.stepType !== 'Start Event' && !step.predecessorId.trim()) {
+    if (step.stepType !== 'Start Event' && !(incomingCounts.get(step.id) ?? 0)) {
       warnings.push({ stepId: step.id, message: 'No incoming step. Set a predecessor.' })
     }
     if (
       step.stepType !== 'End Event' &&
       step.stepType !== 'Decision Point' &&
       step.stepType !== 'Exclusive Gateway' &&
-      (otherSuccessorCounts.get(step.id) ?? 0) === 0
+      (outgoingCounts.get(step.id) ?? 0) === 0
     ) {
       warnings.push({ stepId: step.id, message: 'Dead end. Nothing follows this step.' })
     }
@@ -105,9 +106,13 @@ interface StepRowProps {
   step: Step
   stepIds: string[]
   stepLabels: Map<string, string>
-  isAfterDecision: boolean
+  incomingLinks: Link[]
+  outgoingLinks: Link[]
+  isDecision: boolean
   hasWarning: boolean
   onUpdate: (stepId: string, field: StepField, value: string) => void
+  onAddLink: (from: string, to: string, label?: string) => void
+  onRemoveLink: (from: string, to: string) => void
   onDelete: (stepId: string) => void
   onInsertBelow: (stepId: string) => void
   onMove: (stepId: string, direction: -1 | 1) => void
@@ -117,11 +122,13 @@ interface StepRowProps {
 
 interface StepMatrixProps {
   steps: Step[]
+  links: Link[]
   onStepsChange: Dispatch<SetStateAction<Step[]>>
+  onLinksChange: Dispatch<SetStateAction<Link[]>>
   onGenerate?: (steps: Step[]) => void
 }
 
-const columnWidths = ['110px', 'auto', '180px', '170px', '220px', '90px', '168px']
+const columnWidths = ['110px', 'auto', '230px', '160px', '110px', '220px', '170px']
 
 const inputClass =
   'w-full rounded border border-transparent bg-transparent px-2 py-2 text-sm text-slate-800 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100'
@@ -180,15 +187,22 @@ const StepRow = memo(function StepRow({
   step,
   stepIds,
   stepLabels,
-  isAfterDecision,
+  incomingLinks,
+  outgoingLinks,
+  isDecision,
   hasWarning,
   onUpdate,
+  onAddLink,
+  onRemoveLink,
   onDelete,
   onInsertBelow,
   onMove,
   isFirst,
   isLast,
 }: StepRowProps) {
+  const [nextTargetId, setNextTargetId] = useState('')
+  const [nextLabel, setNextLabel] = useState('')
+
   return (
     <tr
       className={`group transition-colors hover:bg-slate-50/80 ${
@@ -235,54 +249,73 @@ const StepRow = memo(function StepRow({
           ))}
         </select>
       </td>
-      <td className="px-2 py-2">
-        <select
-          aria-label={`Predecessor for ${step.id}`}
-          value={step.predecessorId}
-          onChange={(event) => onUpdate(step.id, 'predecessorId', event.target.value)}
-          className={`${inputClass} text-xs`}
-        >
-          <option value="">None</option>
-          {stepIds
-            .filter((stepId) => stepId !== step.id)
-            .map((stepId) => (
-              <option key={stepId} value={stepId}>
-                {`${stepId} · ${stepLabels.get(stepId) ?? ''}`}
-              </option>
-            ))}
-        </select>
+      <td className="px-2 py-2 text-xs text-slate-600">
+        {incomingLinks.length
+          ? incomingLinks.map((link) =>
+              `${link.from}${link.label ? ` [${link.label}]` : ''}`,
+            ).join(', ')
+          : '—'}
       </td>
       <td className="px-2 py-2">
-        {isAfterDecision ? (
-          <select
-            aria-label={`Branch label for ${step.id}`}
-            value={step.condition}
-            onChange={(event) => onUpdate(step.id, 'condition', event.target.value)}
-            className={inputClass}
-          >
-            <option value="">—</option>
-            <option value="Yes">Yes</option>
-            <option value="No">No</option>
-          </select>
-        ) : step.condition ? (
-          <input
-            aria-label={`Branch label for ${step.id}`}
-            type="text"
-            value={step.condition}
-            onChange={(event) => onUpdate(step.id, 'condition', event.target.value)}
-            title="This label has no decision before it. Clear it."
-            className={inputClass}
-          />
-        ) : (
-          <input
-            aria-label={`Branch label for ${step.id}`}
-            type="text"
-            value=""
-            disabled
-            title="Branch labels only apply to the arrow leaving a Decision Point"
-            className={inputClass}
-          />
-        )}
+        <div className="space-y-2">
+          {outgoingLinks.map((link) => (
+            <div key={JSON.stringify([link.from, link.to])} className="flex items-center gap-1">
+              <span className="min-w-0 flex-1 truncate text-xs text-slate-700">
+                {link.to}{link.label ? ` [${link.label}]` : ''}
+              </span>
+              <button
+                type="button"
+                aria-label={`Remove link from ${link.from} to ${link.to}`}
+                onClick={() => onRemoveLink(link.from, link.to)}
+                className="rounded px-1.5 py-1 text-slate-500 hover:bg-rose-50 hover:text-rose-600"
+              >
+                <Trash2 aria-hidden="true" size={13} />
+              </button>
+            </div>
+          ))}
+          <div className="flex items-center gap-1">
+            <select
+              aria-label={`Next step target for ${step.id}`}
+              value={nextTargetId}
+              onChange={(event) => setNextTargetId(event.target.value)}
+              className={`${inputClass} min-w-0 flex-1 text-xs`}
+            >
+              <option value="">Choose target</option>
+              {stepIds
+                .filter((stepId) => stepId !== step.id)
+                .map((stepId) => (
+                  <option key={stepId} value={stepId}>
+                    {`${stepId} · ${stepLabels.get(stepId) ?? ''}`}
+                  </option>
+                ))}
+            </select>
+            {isDecision && (
+              <select
+                aria-label={`Next step label for ${step.id}`}
+                value={nextLabel}
+                onChange={(event) => setNextLabel(event.target.value)}
+                className={`${inputClass} w-20 text-xs`}
+              >
+                <option value="">Yes/No</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
+            )}
+            <button
+              type="button"
+              aria-label={`Add next step for ${step.id}`}
+              disabled={!nextTargetId || (isDecision && !nextLabel)}
+              onClick={() => {
+                onAddLink(step.id, nextTargetId, isDecision ? nextLabel : undefined)
+                setNextTargetId('')
+                setNextLabel('')
+              }}
+              className="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Add
+            </button>
+          </div>
+        </div>
       </td>
       <td className="px-3 py-2 text-center">
         <div className="flex items-center justify-center">
@@ -328,7 +361,7 @@ const StepRow = memo(function StepRow({
   )
 })
 
-function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
+function StepMatrix({ steps, links, onStepsChange, onLinksChange, onGenerate }: StepMatrixProps) {
   const [generated, setGenerated] = useState(false)
   const [importPreview, setImportPreview] = useState<{
     steps: Step[]
@@ -342,16 +375,7 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
     () => new Map(steps.map((s) => [s.id, s.stepName?.trim() || 'Untitled step'])),
     [steps],
   )
-  const decisionIds = useMemo(
-    () =>
-      new Set(
-        steps
-          .filter((s) => s.stepType === 'Decision Point' || s.stepType === 'Exclusive Gateway')
-          .map((s) => s.id),
-      ),
-    [steps],
-  )
-  const warnings = useMemo(() => computeWarnings(steps), [steps])
+  const warnings = useMemo(() => computeWarnings(steps, links), [steps, links])
   const departmentOptions = useMemo(
     () =>
       [...new Set(steps.map((step) => step.department.trim()).filter(Boolean))].sort((a, b) =>
@@ -363,6 +387,12 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
   const updateStep = useCallback(
     (stepId: string, field: StepField, value: string) => {
       setGenerated(false)
+      const nextId = value.trim()
+      if (
+        field === 'id' &&
+        (!nextId || (nextId !== stepId && stepIds.includes(nextId)))
+      ) return
+
       onStepsChange((currentSteps) => {
         if (field === 'id') {
           const nextId = value.trim()
@@ -391,8 +421,47 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
 
         return currentSteps.map((step) => (step.id === stepId ? { ...step, [field]: value } : step))
       })
+
+      if (field === 'id' && nextId !== stepId) {
+        onLinksChange((currentLinks) =>
+          currentLinks.map((link) => {
+            const from = link.from === stepId ? nextId : link.from
+            const to = link.to === stepId ? nextId : link.to
+            return from === link.from && to === link.to
+              ? link
+              : { ...link, id: `${from}>${to}`, from, to }
+          }),
+        )
+      }
     },
-    [onStepsChange],
+    [onLinksChange, onStepsChange, stepIds],
+  )
+
+  const addLink = useCallback(
+    (from: string, to: string, label?: string) => {
+      setGenerated(false)
+      onLinksChange((currentLinks) =>
+        currentLinks.some((link) => link.from === from && link.to === to)
+          ? currentLinks
+          : [...currentLinks, {
+              id: `${from}>${to}`,
+              from,
+              to,
+              ...(label ? { label } : {}),
+            }],
+      )
+    },
+    [onLinksChange],
+  )
+
+  const removeLink = useCallback(
+    (from: string, to: string) => {
+      setGenerated(false)
+      onLinksChange((currentLinks) =>
+        currentLinks.filter((link) => link.from !== from || link.to !== to),
+      )
+    },
+    [onLinksChange],
   )
 
   const addStep = useCallback(() => {
@@ -404,7 +473,7 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
         stepName: '',
         department: '',
         stepType: 'Task',
-        predecessorId: currentSteps[currentSteps.length - 1]?.id ?? '',
+        predecessorId: '',
         condition: '',
       },
     ])
@@ -422,16 +491,10 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
           stepName: '',
           department: current.department,
           stepType: 'Task',
-          predecessorId: current.id,
+          predecessorId: '',
           condition: '',
         }
-        const isDecision =
-          current.stepType === 'Decision Point' || current.stepType === 'Exclusive Gateway'
-        const relinked = currentSteps.map((step) => {
-          if (isDecision || step.predecessorId !== current.id || step.id === newStep.id) return step
-          return { ...step, predecessorId: newStep.id }
-        })
-        const result = [...relinked]
+        const result = [...currentSteps]
         result.splice(index + 1, 0, newStep)
         return result
       })
@@ -511,6 +574,7 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
     if (!importPreview?.steps.length) return
     if (!window.confirm('This will replace the current table. Continue?')) return
     onStepsChange(importPreview.steps)
+    onLinksChange(toFlowModel({ steps: importPreview.steps }).model.links)
     setGenerated(false)
     setImportPreview(null)
   }
@@ -518,24 +582,16 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
   const deleteStep = useCallback(
     (stepId: string) => {
       setGenerated(false)
-      onStepsChange((currentSteps) =>
-        currentSteps
-          .filter((step) => step.id !== stepId)
-          .map((step) => {
-            const next = { ...step }
-            if (step.predecessorId === stepId) next.predecessorId = ''
-            if (step.sequenceFlows?.some((flow) => flow.targetId === stepId)) {
-              next.sequenceFlows = step.sequenceFlows.filter((flow) => flow.targetId !== stepId)
-            }
-            return next
-          }),
+      onStepsChange((currentSteps) => currentSteps.filter((step) => step.id !== stepId))
+      onLinksChange((currentLinks) =>
+        currentLinks.filter((link) => link.from !== stepId && link.to !== stepId),
       )
     },
-    [onStepsChange],
+    [onLinksChange, onStepsChange],
   )
 
   function generateFlowchart() {
-    onGenerate?.(steps.map((step) => ({ ...step })))
+    onGenerate?.(fromFlowModel({ schemaVersion: 2, steps, links }).steps)
     setGenerated(true)
   }
 
@@ -590,8 +646,8 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
               <th scope="col" className="border-b border-slate-200 px-2 py-3">Step name</th>
               <th scope="col" className="border-b border-slate-200 px-2 py-3">Department</th>
               <th scope="col" className="border-b border-slate-200 px-2 py-3">Step type</th>
-              <th scope="col" className="border-b border-slate-200 px-2 py-3">Predecessor</th>
-              <th scope="col" className="border-b border-slate-200 px-2 py-3">Branch label</th>
+              <th scope="col" className="border-b border-slate-200 px-2 py-3">Incoming</th>
+              <th scope="col" className="border-b border-slate-200 px-2 py-3">Next steps</th>
               <th scope="col" className="border-b border-slate-200 px-3 py-3">
                 <span className="sr-only">Actions</span>
               </th>
@@ -604,9 +660,13 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
                 step={step}
                 stepIds={stepIds}
                 stepLabels={stepLabels}
-                isAfterDecision={decisionIds.has(step.predecessorId)}
+                incomingLinks={links.filter((link) => link.to === step.id)}
+                outgoingLinks={links.filter((link) => link.from === step.id)}
+                isDecision={step.stepType === 'Decision Point' || step.stepType === 'Exclusive Gateway'}
                 hasWarning={warnings.some((warning) => warning.stepId === step.id)}
                 onUpdate={updateStep}
+                onAddLink={addLink}
+                onRemoveLink={removeLink}
                 onDelete={deleteStep}
                 onInsertBelow={insertStepBelow}
                 onMove={moveStep}
