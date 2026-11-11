@@ -36,6 +36,7 @@ export interface Step {
   laneId?: string
   laneName?: string
   sequenceFlows?: SequenceFlow[]
+  goesBackTo?: string[]
 }
 
 export interface ProcessDiagram {

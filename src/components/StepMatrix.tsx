@@ -108,6 +108,7 @@ interface StepRowProps {
   isAfterDecision: boolean
   hasWarning: boolean
   onUpdate: (stepId: string, field: StepField, value: string) => void
+  onGoesBackToChange: (stepId: string, targetIds: string[]) => void
   onDelete: (stepId: string) => void
   onInsertBelow: (stepId: string) => void
   onMove: (stepId: string, direction: -1 | 1) => void
@@ -121,7 +122,7 @@ interface StepMatrixProps {
   onGenerate?: (steps: Step[]) => void
 }
 
-const columnWidths = ['110px', 'auto', '180px', '170px', '220px', '90px', '168px']
+const columnWidths = ['110px', 'auto', '180px', '170px', '220px', '150px', '90px', '168px']
 
 const inputClass =
   'w-full rounded border border-transparent bg-transparent px-2 py-2 text-sm text-slate-800 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100'
@@ -183,12 +184,15 @@ const StepRow = memo(function StepRow({
   isAfterDecision,
   hasWarning,
   onUpdate,
+  onGoesBackToChange,
   onDelete,
   onInsertBelow,
   onMove,
   isFirst,
   isLast,
 }: StepRowProps) {
+  const goesBackTo = step.goesBackTo ?? []
+
   return (
     <tr
       className={`group transition-colors hover:bg-slate-50/80 ${
@@ -251,6 +255,51 @@ const StepRow = memo(function StepRow({
               </option>
             ))}
         </select>
+      </td>
+      <td className="px-2 py-2">
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-wrap gap-1">
+            {goesBackTo.map((targetId) => (
+              <span
+                key={targetId}
+                className="inline-flex max-w-full items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 font-mono text-[10px] text-sky-800"
+              >
+                <span className="truncate">{targetId}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove goes back to ${targetId} from ${step.id}`}
+                  onClick={() =>
+                    onGoesBackToChange(
+                      step.id,
+                      goesBackTo.filter((id) => id !== targetId),
+                    )
+                  }
+                  className="shrink-0 rounded-full text-sky-700 hover:text-rose-600"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+          <select
+            aria-label={`Add goes back to target for ${step.id}`}
+            value=""
+            onChange={(event) => {
+              const targetId = event.target.value
+              if (targetId) onGoesBackToChange(step.id, [...goesBackTo, targetId])
+            }}
+            className={`${inputClass} text-xs`}
+          >
+            <option value="">Add step...</option>
+            {stepIds
+              .filter((stepId) => stepId !== step.id && !goesBackTo.includes(stepId))
+              .map((stepId) => (
+                <option key={stepId} value={stepId}>
+                  {stepId}
+                </option>
+              ))}
+          </select>
+        </div>
       </td>
       <td className="px-2 py-2">
         {isAfterDecision ? (
@@ -373,6 +422,9 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
             if (step.id === stepId) return { ...step, id: nextId }
             const next = { ...step }
             if (step.predecessorId === stepId) next.predecessorId = nextId
+            if (step.goesBackTo?.includes(stepId)) {
+              next.goesBackTo = step.goesBackTo.map((id) => (id === stepId ? nextId : id))
+            }
             if (step.sequenceFlows?.some((flow) => flow.targetId === stepId)) {
               next.sequenceFlows = step.sequenceFlows.map((flow) =>
                 flow.targetId === stepId ? { ...flow, targetId: nextId } : flow,
@@ -390,6 +442,22 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
         }
 
         return currentSteps.map((step) => (step.id === stepId ? { ...step, [field]: value } : step))
+      })
+    },
+    [onStepsChange],
+  )
+
+  const updateGoesBackTo = useCallback(
+    (stepId: string, targetIds: string[]) => {
+      setGenerated(false)
+      onStepsChange((currentSteps) => {
+        const validStepIds = new Set(currentSteps.map((step) => step.id))
+        const goesBackTo = [...new Set(targetIds)].filter(
+          (targetId) => targetId !== stepId && validStepIds.has(targetId),
+        )
+        return currentSteps.map((step) =>
+          step.id === stepId ? { ...step, goesBackTo } : step,
+        )
       })
     },
     [onStepsChange],
@@ -524,6 +592,9 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
           .map((step) => {
             const next = { ...step }
             if (step.predecessorId === stepId) next.predecessorId = ''
+            if (step.goesBackTo?.includes(stepId)) {
+              next.goesBackTo = step.goesBackTo.filter((id) => id !== stepId)
+            }
             if (step.sequenceFlows?.some((flow) => flow.targetId === stepId)) {
               next.sequenceFlows = step.sequenceFlows.filter((flow) => flow.targetId !== stepId)
             }
@@ -591,6 +662,7 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
               <th scope="col" className="border-b border-slate-200 px-2 py-3">Department</th>
               <th scope="col" className="border-b border-slate-200 px-2 py-3">Step type</th>
               <th scope="col" className="border-b border-slate-200 px-2 py-3">Predecessor</th>
+              <th scope="col" className="border-b border-slate-200 px-2 py-3">Goes back to</th>
               <th scope="col" className="border-b border-slate-200 px-2 py-3">Branch label</th>
               <th scope="col" className="border-b border-slate-200 px-3 py-3">
                 <span className="sr-only">Actions</span>
@@ -607,6 +679,7 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
                 isAfterDecision={decisionIds.has(step.predecessorId)}
                 hasWarning={warnings.some((warning) => warning.stepId === step.id)}
                 onUpdate={updateStep}
+                onGoesBackToChange={updateGoesBackTo}
                 onDelete={deleteStep}
                 onInsertBelow={insertStepBelow}
                 onMove={moveStep}
@@ -616,7 +689,7 @@ function StepMatrix({ steps, onStepsChange, onGenerate }: StepMatrixProps) {
             ))}
             {steps.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-500">
+                <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-500">
                   No process steps yet.
                 </td>
               </tr>

@@ -57,7 +57,10 @@ export function isStepList(value: unknown): value is Step[] {
     (step.laneId === undefined || typeof step.laneId === 'string') &&
     (step.laneName === undefined || typeof step.laneName === 'string') &&
     (step.sequenceFlows === undefined ||
-      (Array.isArray(step.sequenceFlows) && step.sequenceFlows.every(isSequenceFlow))),
+      (Array.isArray(step.sequenceFlows) && step.sequenceFlows.every(isSequenceFlow))) &&
+    (step.goesBackTo === undefined ||
+      (Array.isArray(step.goesBackTo) &&
+        step.goesBackTo.every((targetId: unknown) => typeof targetId === 'string'))),
   )
 }
 
@@ -78,13 +81,15 @@ export async function fetchProcessDiagrams(
   if (error) throw error
 
   const diagrams = (data ?? []) as ProcessDiagram[]
-  for (const diagram of diagrams) {
+  return diagrams.map((diagram) => {
     if (!isStepList(diagram.steps)) {
       throw new Error(`Saved flowchart "${diagram.title}" has invalid step data.`)
     }
-  }
-
-  return diagrams
+    return {
+      ...diagram,
+      steps: diagram.steps.map((step) => ({ ...step, goesBackTo: step.goesBackTo ?? [] })),
+    }
+  })
 }
 
 export async function saveProcessDiagram(
@@ -131,7 +136,10 @@ export async function saveProcessDiagram(
     throw new Error(`Saved flowchart "${saved.title}" has invalid step data.`)
   }
 
-  return saved
+  return {
+    ...saved,
+    steps: saved.steps.map((step) => ({ ...step, goesBackTo: step.goesBackTo ?? [] })),
+  }
 }
 
 export async function deleteProcessDiagram(
