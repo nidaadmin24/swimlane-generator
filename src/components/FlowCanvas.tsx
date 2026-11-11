@@ -481,7 +481,30 @@ function layoutFlow(steps: Step[], savedLanes?: Lane[]): FlowLayout {
   }
 }
 
+function GoesBackNote({ node }: { node: PositionedNode }) {
+  const targets = node.step.goesBackTo ?? []
+  if (targets.length === 0) return null
+  const { box } = node
+  return (
+    <div
+      className="absolute truncate whitespace-nowrap text-center text-[12px] font-semibold text-rose-700"
+      style={{ left: box.x, top: box.y - 18, width: box.w }}
+    >
+      ↩ Goes back to {targets.join(', ')}
+    </div>
+  )
+}
+
 function NodeView({ node }: { node: PositionedNode }) {
+  return (
+    <>
+      <NodeShape node={node} />
+      <GoesBackNote node={node} />
+    </>
+  )
+}
+
+function NodeShape({ node }: { node: PositionedNode }) {
   const { step, kind, box } = node
   const title = getNodeTitle(step, kind)
 
